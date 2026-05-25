@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "jsx": "react",
+    "moduleResolution": "node",
+    "target": "es2022",
+    "module": "commonjs",
+    "lib": ["ES2022", "ES2024.Promise", "DOM", "DOM.Iterable"],
+    "outDir": "build",
+    "rootDir": "src-electron",
+    "resolveJsonModule": true
+  },
+  "include": ["src-electron/**/*.ts", "src-electron/**/*.json"]
+}

@@ -1,0 +1,6 @@
+asar: false
+
+files:
+  - build
+  - '.next/standalone/nfc-login/**/*'
+  - '!.next/standalone/nfc-login/node_modules/electron'
