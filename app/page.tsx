@@ -1,18 +1,13 @@
+import Image from 'next/image';
 import Clock from './components/Clock';
 import WeatherWidget from './components/WeatherWidget';
+import TapToLoginCard from './components/TapToLoginCard';
+import UCLogo from './src/UClogo.png';
+import InTTOLogo from './src/inttoLogo.png';
+import Inv8GroupLogo from './src/Group.png';
 
 export const dynamic = 'force-dynamic';
 
-function NFCWaveIcon() {
-  return (
-    <svg width="88" height="88" viewBox="0 0 88 88" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="18" cy="44" r="5" fill="#888" />
-      <path d="M28 24 C44 32 44 56 28 64" stroke="#888" strokeWidth="5.5" strokeLinecap="round" fill="none" />
-      <path d="M41 17 C62 28 62 60 41 71" stroke="#888" strokeWidth="5.5" strokeLinecap="round" fill="none" />
-      <path d="M55 11 C80 24 80 64 55 77" stroke="#888" strokeWidth="5.5" strokeLinecap="round" fill="none" />
-    </svg>
-  );
-}
 
 function CheckInIcon() {
   return (
@@ -37,46 +32,18 @@ function CheckOutIcon() {
 }
 
 function InstitutionLogo() {
-  return (
-    <div
-      className="w-14 h-14 rounded-full flex items-center justify-center text-cream/70 text-xs font-light tracking-wide"
-      style={{ border: '1.5px solid rgba(255,254,249,0.3)' }}
-    >
-      {/* Replace with <Image src="/seal.png" alt="Seal" width={56} height={56} /> */}
-      <span className="text-center leading-tight text-cream/60 text-[9px]">INSTITUTION<br />SEAL</span>
-    </div>
-  );
+  return <Image src={UCLogo} alt="UC Logo" width={56} height={56} className="rounded-full" />;
 }
 
 function BrandLogo() {
-  return (
-    <div className="flex flex-col items-center leading-none select-none">
-      <div className="flex gap-0.75 mb-0.75">
-        {['·', '·', '·', '·'].map((d, i) => (
-          <span key={i} className="text-cream/60 text-xs">{d}</span>
-        ))}
-      </div>
-      <span className="text-cream text-3xl tracking-widest font-black">
-        InTTO
-      </span>
-    </div>
-  );
+  return <Image src={InTTOLogo} alt="InTTO Logo" height={56} width={120} className="object-contain" />;
 }
 
 function Inv8Logo() {
   return (
     <div className="flex items-center gap-2 text-cream/70">
-      <span className="text-lg font-light tracking-wide">Inv8 Studio</span>
-      <svg width="24" height="18" viewBox="0 0 24 18" fill="none" xmlns="http://www.w3.org/2000/svg" opacity="0.7">
-        <path
-          d="M8 9C8 9 6 5 3 5C1 5 0 7 0 9C0 11 1 13 3 13C6 13 8 9 8 9ZM8 9C8 9 10 13 13 13C15 13 16 11 16 9C16 7 15 5 13 5C10 5 8 9 8 9Z"
-          stroke="#FFFEF9"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-          fill="none"
-          transform="translate(4 0)"
-        />
-      </svg>
+      <span className="text-5xl font-light tracking-wide">Inv8 Studio</span>
+      <Image src={Inv8GroupLogo} alt="Inv8 Studio Logo" height={50} width={50} className="object-contain" />
     </div>
   );
 }
@@ -106,21 +73,7 @@ export default function LandingPage() {
         {/* ── Right column ── */}
         <div className="flex flex-col gap-4 h-full">
 
-          {/* Top-right: NFC Login */}
-          <div className="glass-card flex-1 flex flex-col items-center justify-center gap-6 px-8">
-            <h2 className="text-cream text-5xl font-extrabold tracking-tight">
-              Tap To Login
-            </h2>
-
-            <div className="nfc-area w-full max-w-xs flex items-center justify-center py-10">
-              <NFCWaveIcon />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]" />
-              <span className="text-cream/80 text-base font-light tracking-wide">Ready to Scan</span>
-            </div>
-          </div>
+          <TapToLoginCard />
 
           {/* Bottom-right: Guest Management */}
           <div className="glass-card flex-1 flex flex-col justify-center px-8 py-6 gap-5">
@@ -150,6 +103,7 @@ export default function LandingPage() {
           </div>
 
         </div>
+
       </div>
     </main>
   );

@@ -14,6 +14,7 @@
     "prepare": "node node_modules/electron/install.js"
   },
   "dependencies": {
+    "firebase": "^12.14.0",
     "next": "^16.2.6",
     "next-electron-rsc": "^0.3.0",
     "react": "19.2.4",
