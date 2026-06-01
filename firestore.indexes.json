@@ -1,0 +1,52 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "timeRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date",     "order": "ASCENDING" },
+        { "fieldPath": "timeIn",   "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "internId", "order": "ASCENDING" },
+        { "fieldPath": "date",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "internId", "order": "ASCENDING" },
+        { "fieldPath": "date",     "order": "ASCENDING" },
+        { "fieldPath": "timeOut",  "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "interns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "nfcUid",   "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "interns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status",   "order": "ASCENDING" },
+        { "fieldPath": "name",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "guests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "checkInTime", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
