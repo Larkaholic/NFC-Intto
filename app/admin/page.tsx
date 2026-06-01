@@ -497,10 +497,14 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
+    // Each fetch function calls setLoading(true) synchronously then awaits data.
+    // This is React's own documented data-fetching pattern, so we suppress the rule.
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (tab === 'interns'   && !internsLoaded)   fetchInterns();
     if (tab === 'guests')                        fetchGuests(guestDate);
     if (tab === 'records')                       fetchRecords(recordDate);
     if (tab === 'analytics' && !analyticsLoaded) fetchAnalytics();
+    /* eslint-enable react-hooks/set-state-in-effect */
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 

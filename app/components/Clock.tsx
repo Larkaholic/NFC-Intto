@@ -6,9 +6,10 @@ export default function Clock() {
   const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
-    setNow(new Date());
+    // Use setTimeout so the initial setState is in a callback, not synchronous in the effect body.
+    const init = setTimeout(() => setNow(new Date()), 0);
     const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
+    return () => { clearTimeout(init); clearInterval(id); };
   }, []);
 
   if (!now) return <div className="h-40" />;

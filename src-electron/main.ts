@@ -1,5 +1,5 @@
 import path from 'path';
-import { app, BrowserWindow, protocol, session } from 'electron';
+import { app, BrowserWindow, protocol } from 'electron';
 import { createHandler } from 'next-electron-rsc';
 
 let mainWindow: BrowserWindow | null;
