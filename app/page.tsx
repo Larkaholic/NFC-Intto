@@ -36,14 +36,14 @@ function InstitutionLogo() {
 }
 
 function BrandLogo() {
-  return <Image src={InTTOLogo} alt="InTTO Logo" height={80} width={180} className="object-contain" />;
+  return <Image src={InTTOLogo} alt="InTTO Logo" width={180} height={80} style={{ height: 'auto' }} className="object-contain" />;
 }
 
 function Inv8Logo() {
   return (
     <div className="flex items-center gap-2 text-cream/70">
       <span className="text-5xl font-light tracking-wide">Inv8 Studio</span>
-      <Image src={Inv8GroupLogo} alt="Inv8 Studio Logo" height={50} width={50} className="object-contain" />
+      <Image src={Inv8GroupLogo} alt="Inv8 Studio Logo" width={50} height={50} style={{ height: 'auto' }} className="object-contain" />
     </div>
   );
 }

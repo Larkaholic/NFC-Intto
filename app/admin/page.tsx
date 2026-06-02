@@ -13,6 +13,7 @@ import {
   getAllInternAnalytics,
   getHoursByMajor,
   getInternsNearCompletion,
+  recalcAllInternHours,
 } from '@/lib/firestore';
 import type { Intern, Guest, TimeRecord, InternAnalyticsSummary } from '@/lib/firestore';
 
@@ -157,6 +158,12 @@ function DateFilter({
 
 type InternFilter = 'all' | 'active' | 'clocked' | 'done';
 
+function fmtHours(h: number) {
+  const rounded = Math.round(h);
+  const days = Math.ceil(rounded / 8);
+  return { h: rounded, d: days };
+}
+
 function InternTab({ interns, loading, onRefresh }: {
   interns: Intern[];
   loading: boolean;
@@ -164,11 +171,22 @@ function InternTab({ interns, loading, onRefresh }: {
 }) {
   const [filter, setFilter] = useState<InternFilter>('all');
   const [exporting, setExporting] = useState(false);
+  const [recalcing, setRecalcing] = useState(false);
 
   async function handleExport() {
     setExporting(true);
     try { await exportInternRecordsXLS(interns); }
     finally { setExporting(false); }
+  }
+
+  async function handleRecalc() {
+    setRecalcing(true);
+    try {
+      await recalcAllInternHours();
+      onRefresh();
+    } finally {
+      setRecalcing(false);
+    }
   }
 
   const filtered = interns.filter((i) => {
@@ -215,6 +233,13 @@ function InternTab({ interns, loading, onRefresh }: {
             Refresh
           </button>
           <button
+            onClick={handleRecalc}
+            disabled={recalcing || interns.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-amber-400/40 text-amber-400 hover:bg-amber-400/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          >
+            {recalcing ? 'Recalculating…' : 'Recalculate Hours'}
+          </button>
+          <button
             onClick={handleExport}
             disabled={exporting || interns.length === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-400/40 text-emerald-400 hover:bg-emerald-400/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
@@ -246,8 +271,14 @@ function InternTab({ interns, loading, onRefresh }: {
                     <Td className="text-cream/60 max-w-[150px] truncate">{i.school}</Td>
                     <Td><Badge status={i.status} /></Td>
                     <Td><ClockBadge isClockedIn={i.isClockedIn} /></Td>
-                    <Td className="text-cream/70">{i.completedHours}h</Td>
-                    <Td className="text-cream/70">{i.remainingHours}h</Td>
+                    <Td>
+                      <span className="text-cream/70">{fmtHours(i.completedHours).h}h</span>
+                      <span className="text-cream/40 text-xs ml-1">({fmtHours(i.completedHours).d}d)</span>
+                    </Td>
+                    <Td>
+                      <span className="text-cream/70">{fmtHours(i.remainingHours).h}h</span>
+                      <span className="text-cream/40 text-xs ml-1">({fmtHours(i.remainingHours).d}d)</span>
+                    </Td>
                     <Td className="text-cream/50 text-xs">{fmtDate(i.startDate.toDate())}</Td>
                     <Td className="text-cream/50 text-xs">{fmtDate(i.endDate.toDate())}</Td>
                   </tr>
@@ -446,7 +477,10 @@ function AnalyticsTab({ analytics, hoursByMajor, nearCompletion, loading, onRefr
                     <p className="text-cream text-sm font-medium">{i.name}</p>
                     <p className="text-cream/40 text-xs">{i.major}</p>
                   </div>
-                  <span className="text-amber-400 text-sm font-semibold">{i.remainingHours}h left</span>
+                  <div className="text-right">
+                    <span className="text-amber-400 text-sm font-semibold">{fmtHours(i.remainingHours).h}h left</span>
+                    <p className="text-amber-400/60 text-xs">{fmtHours(i.remainingHours).d} days</p>
+                  </div>
                 </div>
               ))}
             </div>
@@ -484,8 +518,8 @@ function AnalyticsTab({ analytics, hoursByMajor, nearCompletion, loading, onRefr
                       </Td>
                       <Td className="text-cream/70">{a.attendanceRate}%</Td>
                       <Td className="text-cream/70">{a.averageDailyHours}h</Td>
-                      <Td className="text-cream/70">{a.completedHours}h</Td>
-                      <Td className="text-cream/70">{a.remainingHours}h</Td>
+                      <Td className="text-cream/70">{Math.round(a.completedHours)}h</Td>
+                      <Td className="text-cream/70">{Math.round(a.remainingHours)}h</Td>
                       <Td><Badge status={a.status} /></Td>
                     </tr>
                   ))}

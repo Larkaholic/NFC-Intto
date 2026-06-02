@@ -9,6 +9,14 @@ import type { Intern, InternCreate, InternUpdate, TimeRecord, TimeRecordCreate }
 const INTERNS = 'interns';
 const TIME_RECORDS = 'timeRecords';
 
+// Base required hours per major — used by recalcAllInternHours
+const MAJOR_BASE_HOURS: Record<string, number> = {
+  'IT': 350,
+  'MMA': 250,
+  'Net Sec': 350,
+  'CS': 250,
+};
+
 // ─── Intern CRUD ─────────────────────────────────────────────────────────────
 
 export async function createIntern(data: InternCreate): Promise<string> {
@@ -63,12 +71,14 @@ export async function clockIn(internId: string, atTime?: Date): Promise<string> 
   const now = atTime ? Timestamp.fromDate(atTime) : Timestamp.now();
   const date = now.toDate().toISOString().split('T')[0];
 
-  // Late after 8:00 AM — penalty: +2h per every 15 min (or fraction thereof)
+  // 8:00 = on time; 8:01+ = late. Each 15-min bracket (or fraction) adds +2h penalty.
+  // Brackets: 8:01–8:15 → +2h, 8:16–8:30 → +4h, 8:31–8:45 → +6h, etc.
   const hours = now.toDate().getHours();
   const minutes = now.toDate().getMinutes();
   const isLate = hours > 8 || (hours === 8 && minutes >= 1);
   const minutesLate = isLate ? (hours - 8) * 60 + minutes : 0;
-  const penaltyHours = Math.ceil(minutesLate / 15) * 2;
+  const lateBrackets = isLate ? Math.ceil(minutesLate / 15) : 0;
+  const penaltyHours = lateBrackets * 2;
 
   const record: TimeRecordCreate = {
     internId,
@@ -133,7 +143,8 @@ export async function clockOut(internId: string): Promise<void> {
     hoursRendered: Math.round(hoursRendered * 100) / 100,
   });
 
-  const newCompleted = intern.completedHours + hoursRendered;
+  // Each present day (with a completed clock-out) counts as exactly 8h
+  const newCompleted = intern.completedHours + 8;
   const newRemaining = Math.max(0, intern.requiredHours - newCompleted);
 
   await updateDoc(doc(db, INTERNS, internId), {
@@ -175,4 +186,43 @@ export async function getAllTimeRecords(): Promise<TimeRecord[]> {
 
 export async function updateTimeRecordNotes(recordId: string, notes: string): Promise<void> {
   await updateDoc(doc(db, TIME_RECORDS, recordId), { notes });
+}
+
+// ─── Recalculate Hours ────────────────────────────────────────────────────────
+
+/**
+ * Recomputes completedHours, requiredHours, and remainingHours for every intern
+ * from their actual time records. Run this once to fix corrupted stored values.
+ *
+ * Rules:
+ *  - Each day with a completed clock-out (timeOut != null) = 8h completed
+ *  - requiredHours = major base hours + sum of penaltyHours from all records
+ *  - Absent days (no time record) count as 0h
+ */
+export async function recalcAllInternHours(): Promise<void> {
+  const interns = await getAllInterns();
+  await Promise.all(interns.map(async (intern) => {
+    const records = await getTimeRecordsByIntern(intern.id);
+
+    // Distinct dates where the intern actually clocked out
+    const completedDates = new Set(
+      records.filter((r) => r.timeOut !== null).map((r) => r.date)
+    );
+    const completedHours = completedDates.size * 8;
+
+    // Derive required hours from major base + actual penalties on record
+    const baseHours = MAJOR_BASE_HOURS[intern.major] ?? 0;
+    const totalPenalties = records.reduce((s, r) => s + r.penaltyHours, 0);
+    const requiredHours = baseHours + totalPenalties;
+
+    const remainingHours = Math.max(0, requiredHours - completedHours);
+
+    await updateDoc(doc(db, INTERNS, intern.id), {
+      requiredHours,
+      completedHours,
+      remainingHours,
+      status: remainingHours <= 0 ? 'done' : intern.status,
+      updatedAt: serverTimestamp(),
+    });
+  }));
 }
