@@ -5,8 +5,9 @@
   "main": "build/main.js",
   "scripts": {
     "dev": "next dev",
-    "build": "npm run build:next && npm run build:ts && npm run build:electron",
+    "build": "npm run build:next && npm run build:copy && npm run build:ts && npm run build:electron",
     "build:next": "next build",
+    "build:copy": "powershell -Command \"Copy-Item -Recurse -Force .next\\static .next\\standalone\\.next\\static; if (Test-Path public) { Copy-Item -Recurse -Force public .next\\standalone\\public }\"",
     "build:ts": "tsc --project tsconfig-electron.json",
     "build:electron": "electron-builder --config electron-builder.yml",
     "start": "cross-env NODE_ENV=development tsc-watch --noClear --onSuccess \"electron .\" --project tsconfig-electron.json",

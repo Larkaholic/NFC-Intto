@@ -11,7 +11,7 @@ const appPath = app.getAppPath();
 const dev = !app.isPackaged;
 const dir = dev
   ? appPath
-  : path.join(appPath, '.next', 'standalone', 'nfc-login');
+  : path.join(appPath, '.next', 'standalone');
 
 const { createInterceptor, localhostUrl } = createHandler({
   dev,
