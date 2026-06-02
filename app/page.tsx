@@ -32,11 +32,11 @@ function CheckOutIcon() {
 }
 
 function InstitutionLogo() {
-  return <Image src={UCLogo} alt="UC Logo" width={56} height={56} className="rounded-full" />;
+  return <Image src={UCLogo} alt="UC Logo" width={90} height={90} className="rounded-full" />;
 }
 
 function BrandLogo() {
-  return <Image src={InTTOLogo} alt="InTTO Logo" height={56} width={120} className="object-contain" />;
+  return <Image src={InTTOLogo} alt="InTTO Logo" height={80} width={180} className="object-contain" />;
 }
 
 function Inv8Logo() {
@@ -50,19 +50,20 @@ function Inv8Logo() {
 
 export default function LandingPage() {
   return (
-    <main className="w-screen h-screen bg-brand flex items-center justify-center p-6">
+    <main className="w-screen h-screen bg-brand flex items-center justify-center p-30">
       <div className="grid grid-cols-2 gap-4 w-full h-full max-w-6xl">
 
         {/* ── Left: Info Card ── */}
         <div className="glass-card flex flex-col items-center justify-between p-8">
-          <div className="flex items-center gap-4 w-full justify-center">
+          <div className="flex items-center gap-5 w-full justify-center">
             <InstitutionLogo />
             <BrandLogo />
           </div>
 
-          <Clock />
-
-          <WeatherWidget />
+          <div className="flex flex-col items-center gap-8">
+            <Clock />
+            <WeatherWidget />
+          </div>
 
           <div className="flex flex-col items-center gap-1 text-cream/50">
             <span className="text-sm font-light tracking-widest uppercase">Powered By</span>
@@ -76,13 +77,13 @@ export default function LandingPage() {
           <TapToLoginCard />
 
           {/* Bottom-right: Guest Management */}
-          <div className="glass-card flex-1 flex flex-col justify-center px-8 py-6 gap-5">
-            <h2 className="text-cream text-4xl font-bold text-center tracking-tight">
+          <div className="glass-card flex-1 flex flex-col justify-center px-8 py-8 gap-6">
+            <h2 className="text-cream text-5xl font-extrabold text-center tracking-tight">
               Guest Management
             </h2>
 
-            <button className="guest-btn flex items-center gap-4 px-5 py-4 w-full text-left">
-              <div className="shrink-0 w-10 h-10 rounded-full border border-cream/20 flex items-center justify-center">
+            <button className="guest-btn flex items-center gap-4 px-6 py-5 w-full text-left">
+              <div className="shrink-0 w-11 h-11 rounded-full border border-cream/20 flex items-center justify-center">
                 <CheckInIcon />
               </div>
               <div>
@@ -91,8 +92,8 @@ export default function LandingPage() {
               </div>
             </button>
 
-            <button className="guest-btn flex items-center gap-4 px-5 py-4 w-full text-left">
-              <div className="shrink-0 w-10 h-10 rounded-full border border-cream/20 flex items-center justify-center">
+            <button className="guest-btn flex items-center gap-4 px-6 py-5 w-full text-left">
+              <div className="shrink-0 w-11 h-11 rounded-full border border-cream/20 flex items-center justify-center">
                 <CheckOutIcon />
               </div>
               <div>

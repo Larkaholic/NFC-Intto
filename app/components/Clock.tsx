@@ -14,7 +14,10 @@ export default function Clock() {
 
   if (!now) return <div className="h-40" />;
 
-  const hh = String(now.getHours()).padStart(2, '0');
+  const rawHours = now.getHours();
+  const hours12 = rawHours % 12 || 12;
+  const ampm = rawHours < 12 ? 'AM' : 'PM';
+  const hh = String(hours12).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
   const date = now.toLocaleDateString('en-US', {
     month: '2-digit',
@@ -24,12 +27,20 @@ export default function Clock() {
 
   return (
     <div className="flex flex-col items-center select-none">
-      <span
-        className="leading-none text-cream font-black tracking-tight"
-        style={{ fontSize: 'clamp(5rem, 12vw, 9rem)', letterSpacing: '-0.02em' }}
-      >
-        {hh}:{mm}
-      </span>
+      <div className="flex items-end gap-2 leading-none">
+        <span
+          className="text-cream font-black tracking-tight"
+          style={{ fontSize: 'clamp(5rem, 12vw, 9rem)', letterSpacing: '-0.02em', lineHeight: 1 }}
+        >
+          {hh}:{mm}
+        </span>
+        <span
+          className="text-cream/70 font-semibold tracking-wide pb-2"
+          style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}
+        >
+          {ampm}
+        </span>
+      </div>
       <span className="text-cream/80 text-2xl font-light tracking-widest mt-1">
         {date}
       </span>

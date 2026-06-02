@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import * as XLSX from 'xlsx';
 import { auth } from '@/lib/firebase';
 import { adminSignOut } from '@/lib/auth';
 import {
   getAllInterns,
+  getAllTimeRecords,
   getGuestsByDate,
   getTimeRecordsByDate,
   getAllInternAnalytics,
@@ -27,6 +29,50 @@ function fmtTime(ts: { toDate: () => Date } | null): string {
 
 function fmtDate(d: Date): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function fmtTimeRaw(ts: { toDate: () => Date } | null): string {
+  if (!ts) return '';
+  return ts.toDate().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function parseName(full: string): { first: string; last: string; mi: string } {
+  const parts = full.trim().split(/\s+/);
+  if (parts.length === 1) return { first: parts[0], last: '', mi: '' };
+  if (parts.length === 2) return { first: parts[0], last: parts[1], mi: '' };
+  return { first: parts[0], mi: parts[1][0] + '.', last: parts.slice(2).join(' ') };
+}
+
+async function exportInternRecordsXLS(interns: Intern[]) {
+  const allRecords = await getAllTimeRecords();
+  const internMap = new Map(interns.map((i) => [i.id, i]));
+
+  const rows = allRecords.map((r) => {
+    const intern = internMap.get(r.internId);
+    const { first, last, mi } = parseName(r.internName);
+    return {
+      'ID':            intern?.studentId ?? r.internId,
+      'USER TYPE':     'Intern',
+      'USER STATE':    intern?.status ?? '',
+      'HONORIFICS':    '',
+      'FIRST NAME':    first,
+      'LAST NAME':     last,
+      'MIDDLE INITIAL': mi,
+      'AFFILIATION':   intern?.school ?? '',
+      'PURPOSE':       'Internship',
+      'EMAIL':         intern?.email ?? '',
+      'TIME IN':        fmtTimeRaw(r.timeIn),
+      'TIME OUT':       fmtTimeRaw(r.timeOut),
+      'DATE OF VISIT':  r.date,
+      'MINUTES LATE':   r.minutesLate > 0 ? r.minutesLate : '',
+      'PENALTY HOURS':  r.penaltyHours > 0 ? r.penaltyHours : '',
+    };
+  });
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Intern Records');
+  XLSX.writeFile(wb, `intern-records-${new Date().toISOString().split('T')[0]}.xlsx`);
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -117,6 +163,13 @@ function InternTab({ interns, loading, onRefresh }: {
   onRefresh: () => void;
 }) {
   const [filter, setFilter] = useState<InternFilter>('all');
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExport() {
+    setExporting(true);
+    try { await exportInternRecordsXLS(interns); }
+    finally { setExporting(false); }
+  }
 
   const filtered = interns.filter((i) => {
     if (filter === 'active')  return i.status === 'active';
@@ -157,9 +210,18 @@ function InternTab({ interns, loading, onRefresh }: {
             </button>
           ))}
         </div>
-        <button onClick={onRefresh} className="text-cream/40 hover:text-cream/70 text-sm transition-colors">
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={onRefresh} className="text-cream/40 hover:text-cream/70 text-sm transition-colors">
+            Refresh
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={exporting || interns.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-400/40 text-emerald-400 hover:bg-emerald-400/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          >
+            {exporting ? 'Exporting…' : 'Export XLS'}
+          </button>
+        </div>
       </div>
 
       <div className="glass-card overflow-hidden">

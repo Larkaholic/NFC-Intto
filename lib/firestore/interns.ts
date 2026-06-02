@@ -3,6 +3,7 @@ import {
   query, where, orderBy, Timestamp, serverTimestamp,
 } from 'firebase/firestore/lite';
 import { db } from '../firebase';
+import { calcEndDate } from '../utils/dates';
 import type { Intern, InternCreate, InternUpdate, TimeRecord, TimeRecordCreate } from './types';
 
 const INTERNS = 'interns';
@@ -62,12 +63,12 @@ export async function clockIn(internId: string, atTime?: Date): Promise<string> 
   const now = atTime ? Timestamp.fromDate(atTime) : Timestamp.now();
   const date = now.toDate().toISOString().split('T')[0];
 
-  // Late after 8:00 AM (8:01 = 1 min late = +2h penalty per minute)
+  // Late after 8:00 AM — penalty: +2h per every 15 min (or fraction thereof)
   const hours = now.toDate().getHours();
   const minutes = now.toDate().getMinutes();
   const isLate = hours > 8 || (hours === 8 && minutes >= 1);
   const minutesLate = isLate ? (hours - 8) * 60 + minutes : 0;
-  const penaltyHours = minutesLate * 2;
+  const penaltyHours = Math.ceil(minutesLate / 15) * 2;
 
   const record: TimeRecordCreate = {
     internId,
@@ -88,12 +89,17 @@ export async function clockIn(internId: string, atTime?: Date): Promise<string> 
     createdAt: serverTimestamp(),
   });
 
+  const newRequiredHours = intern.requiredHours + penaltyHours;
+  const startDateStr = intern.startDate.toDate().toISOString().split('T')[0];
+  const newEndDate = penaltyHours > 0 ? calcEndDate(startDateStr, newRequiredHours) : null;
+
   await updateDoc(doc(db, INTERNS, internId), {
     isClockedIn: true,
     lastClockIn: now,
     ...(penaltyHours > 0 && {
-      requiredHours: intern.requiredHours + penaltyHours,
+      requiredHours: newRequiredHours,
       remainingHours: intern.remainingHours + penaltyHours,
+      endDate: Timestamp.fromDate(new Date(newEndDate + 'T00:00:00')),
     }),
     updatedAt: serverTimestamp(),
   });
@@ -157,6 +163,12 @@ export async function getTimeRecordsByDate(date: string): Promise<TimeRecord[]> 
     where('date', '==', date),
     orderBy('timeIn', 'asc')
   );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as TimeRecord);
+}
+
+export async function getAllTimeRecords(): Promise<TimeRecord[]> {
+  const q = query(collection(db, TIME_RECORDS), orderBy('date', 'asc'), orderBy('timeIn', 'asc'));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as TimeRecord);
 }

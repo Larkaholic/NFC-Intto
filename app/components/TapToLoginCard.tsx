@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Timestamp } from 'firebase/firestore/lite';
 import { createIntern, getInternByNfc, clockIn, clockOut } from '@/lib/firestore';
+import { calcEndDate } from '@/lib/utils/dates';
 
 function NFCWaveIcon() {
   return (
@@ -36,22 +37,6 @@ const EMPTY_FORM = {
   startDate: '',
   endDate: '',
 };
-
-/** Approximate end date: counts Mon–Sat working days from startDate */
-function calcEndDate(startDateStr: string, hours: number): string {
-  if (!startDateStr || !hours) return '';
-  const totalDays = Math.ceil(hours / 8);
-  const date = new Date(startDateStr + 'T00:00:00');
-  let counted = 0;
-  while (true) {
-    if (date.getDay() !== 0) {
-      counted++;
-      if (counted >= totalDays) break;
-    }
-    date.setDate(date.getDate() + 1);
-  }
-  return date.toISOString().split('T')[0];
-}
 
 /** Auto-format input to 00-0000-000 */
 function formatStudentId(raw: string): string {
@@ -122,11 +107,11 @@ export default function TapToLoginCard() {
         setScanResult({ name: intern.name, action: 'in', time: timeStr });
       }
       setScanState('success');
-      setTimeout(() => { setScanState('idle'); setScanResult(null); }, 4000);
+      setTimeout(() => { setScanState('idle'); setScanResult(null); }, 1000);
     } catch (err) {
       setScanState('error');
       setScanError(err instanceof Error ? err.message : 'Error processing card');
-      setTimeout(() => setScanState('idle'), 3000);
+      setTimeout(() => setScanState('idle'), 1000);
     }
   }, []);
 
