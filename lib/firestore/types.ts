@@ -44,7 +44,10 @@ export interface TimeRecord {
   hoursRendered: number | null; // computed on clock-out
   isLate: boolean;
   minutesLate: number;
-  penaltyHours: number;
+  penaltyHours: number;       // late-arrival penalty
+  isEarlyOut: boolean;
+  minutesEarlyOut: number;
+  earlyOutPenaltyHours: number;
   notes: string;
   createdAt: Timestamp;
 }

@@ -18,7 +18,7 @@ function NFCWaveIcon() {
 
 const MAJORS = [
   { value: 'IT',      hours: 350 },
-  { value: 'MMA',     hours: 250 },
+  { value: 'MMA',     hours: 200 },
   { value: 'Net Sec', hours: 350 },
   { value: 'CS',      hours: 250 },
 ];
