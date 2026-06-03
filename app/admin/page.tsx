@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
+import { Timestamp } from 'firebase/firestore';
 import { auth } from '@/lib/firebase';
 import { adminSignOut } from '@/lib/auth';
+import { calcEndDate } from '@/lib/utils/dates';
+import { ATTENDANCE } from '@/lib/attendance-config';
 import {
   getAllInterns,
   getAllTimeRecords,
@@ -13,7 +16,11 @@ import {
   getAllInternAnalytics,
   getHoursByMajor,
   getInternsNearCompletion,
+  getDailyAttendance,
   recalcAllInternHours,
+  updateIntern,
+  propagateInternNameUpdate,
+  getStaffByNfc,
 } from '@/lib/firestore';
 import type { Intern, Guest, TimeRecord, InternAnalyticsSummary } from '@/lib/firestore';
 
@@ -138,6 +145,21 @@ function Td({ children, className = '' }: { children: React.ReactNode; className
   return <td className={`py-3 px-4 ${className}`}>{children}</td>;
 }
 
+function FormField({ label, required, children }: {
+  label: string; required?: boolean; children: React.ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-cream/60 text-xs font-medium tracking-widest uppercase">
+        {label}{required && <span className="text-emerald-400 ml-0.5">*</span>}
+      </span>
+      <div className="[&_input]:w-full [&_select]:w-full [&_input]:bg-transparent [&_select]:bg-brand [&_input]:border [&_select]:border [&_input]:border-white/15 [&_select]:border-white/15 [&_input]:rounded-lg [&_select]:rounded-lg [&_input]:px-3 [&_select]:px-3 [&_input]:py-2.5 [&_select]:py-2.5 [&_input]:text-cream [&_select]:text-cream [&_input]:text-sm [&_select]:text-sm [&_input]:outline-none [&_select]:outline-none [&_input:focus]:border-emerald-400/60 [&_select:focus]:border-emerald-400/60 [&_input::placeholder]:text-cream/25 [&_input:disabled]:opacity-50 [&_input:disabled]:cursor-not-allowed">
+        {children}
+      </div>
+    </label>
+  );
+}
+
 function DateFilter({
   value, onChange,
 }: { value: string; onChange: (d: string) => void }) {
@@ -154,6 +176,338 @@ function DateFilter({
   );
 }
 
+// ─── NFC Auth Gate ────────────────────────────────────────────────────────────
+
+type AuthState = 'waiting' | 'checking' | 'error';
+
+function NfcWaveAdminIcon() {
+  return (
+    <svg width="48" height="48" viewBox="0 0 88 88" fill="none">
+      <circle cx="18" cy="44" r="5" fill="rgba(255,254,249,0.45)" />
+      <path d="M28 24 C44 32 44 56 28 64" stroke="rgba(255,254,249,0.45)" strokeWidth="5.5" strokeLinecap="round" fill="none" />
+      <path d="M41 17 C62 28 62 60 41 71" stroke="rgba(255,254,249,0.45)" strokeWidth="5.5" strokeLinecap="round" fill="none" />
+      <path d="M55 11 C80 24 80 64 55 77" stroke="rgba(255,254,249,0.45)" strokeWidth="5.5" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
+function NfcAuthGate({ onAuthorized, onCancel }: {
+  onAuthorized: (staffName: string) => void;
+  onCancel: () => void;
+}) {
+  const [authState, setAuthState] = useState<AuthState>('waiting');
+  const [errorMsg, setErrorMsg] = useState('');
+  const bufferRef = useRef('');
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stateRef = useRef<AuthState>('waiting');
+
+  useEffect(() => { stateRef.current = authState; }, [authState]);
+
+  const processBuffer = useCallback(async () => {
+    const uid = bufferRef.current.trim();
+    bufferRef.current = '';
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    if (uid.length < 4) return;
+
+    setAuthState('checking');
+    try {
+      const staff = await getStaffByNfc(uid);
+      if (!staff) {
+        setAuthState('error');
+        setErrorMsg('Unrecognized card. Authorized staff only.');
+        setTimeout(() => setAuthState('waiting'), 2500);
+        return;
+      }
+      onAuthorized(staff.name);
+    } catch {
+      setAuthState('error');
+      setErrorMsg('Could not verify card. Try again.');
+      setTimeout(() => setAuthState('waiting'), 2500);
+    }
+  }, [onAuthorized]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (stateRef.current === 'checking') return;
+      if (e.key === 'Escape') { onCancel(); return; }
+      if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab',
+        'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+        'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
+      ].includes(e.key)) return;
+      if (e.key === 'Enter') { processBuffer(); return; }
+      if (e.key.length === 1) {
+        bufferRef.current += e.key;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(processBuffer, 150);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [processBuffer, onCancel]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-6"
+      style={{ background: 'rgba(13,41,31,0.92)', backdropFilter: 'blur(8px)' }}
+    >
+      <div className="glass-card w-full max-w-xs p-8 flex flex-col items-center gap-6">
+        <div className="text-center">
+          <h2 className="text-cream text-xl font-bold">Staff Authorization</h2>
+          <p className="text-cream/40 text-sm mt-1">Scan your NFC card to proceed</p>
+        </div>
+
+        <div
+          className="w-24 h-24 rounded-full border border-white/10 flex items-center justify-center"
+          style={{ background: 'rgba(255,255,255,0.04)' }}
+        >
+          {authState === 'checking' && (
+            <div className="w-10 h-10 rounded-full border-4 border-cream/20 border-t-emerald-400 animate-spin" />
+          )}
+          {authState === 'error' && (
+            <span className="text-red-400 text-4xl leading-none">✕</span>
+          )}
+          {authState === 'waiting' && <NfcWaveAdminIcon />}
+        </div>
+
+        {authState === 'waiting' && (
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]" />
+            <span className="text-cream/70 text-sm">Ready to scan</span>
+          </div>
+        )}
+        {authState === 'checking' && (
+          <span className="text-cream/50 text-sm">Verifying…</span>
+        )}
+        {authState === 'error' && (
+          <p className="text-red-400 text-sm text-center">{errorMsg}</p>
+        )}
+
+        <button
+          onClick={onCancel}
+          className="text-cream/35 hover:text-cream/60 text-sm transition-colors"
+        >Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Edit Intern Modal ────────────────────────────────────────────────────────
+
+function EditInternModal({ intern, onClose, onSaved }: {
+  intern: Intern;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const EDIT_MAJORS = (Object.entries(ATTENDANCE.baseHours) as [string, number][]).map(
+    ([value, hours]) => ({ value, hours })
+  );
+
+  const [form, setForm] = useState({
+    name: intern.name,
+    email: intern.email,
+    studentId: intern.studentId,
+    course: intern.course,
+    major: intern.major,
+    year: intern.year,
+    school: intern.school,
+    supervisor: intern.supervisor,
+    nfcUid: intern.nfcUid,
+    status: intern.status,
+    startDate: intern.startDate.toDate().toISOString().split('T')[0],
+    endDate: intern.endDate.toDate().toISOString().split('T')[0],
+    requiredHours: intern.requiredHours,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function handleMajorChange(value: string) {
+    const oldBase = ATTENDANCE.baseHours[intern.major] ?? 0;
+    const penalties = Math.max(0, intern.requiredHours - oldBase);
+    const newRequired = (ATTENDANCE.baseHours[value] ?? 0) + penalties;
+    setForm((f) => ({
+      ...f,
+      major: value,
+      requiredHours: newRequired,
+      endDate: f.startDate ? calcEndDate(f.startDate, newRequired) : f.endDate,
+    }));
+  }
+
+  function handleStartDate(value: string) {
+    setForm((f) => ({
+      ...f,
+      startDate: value,
+      endDate: value ? calcEndDate(value, f.requiredHours) : f.endDate,
+    }));
+  }
+
+  function handleRequiredHours(value: number) {
+    if (isNaN(value) || value < 0) return;
+    setForm((f) => ({
+      ...f,
+      requiredHours: value,
+      endDate: f.startDate ? calcEndDate(f.startDate, value) : f.endDate,
+    }));
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.startDate || !form.endDate) return;
+    setError('');
+    setSaving(true);
+    try {
+      if (form.name.trim() !== intern.name) {
+        await propagateInternNameUpdate(intern.id, form.name.trim());
+      }
+      await updateIntern(intern.id, {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        studentId: form.studentId.trim(),
+        course: form.course.trim(),
+        major: form.major,
+        year: form.year,
+        school: form.school.trim(),
+        supervisor: form.supervisor.trim(),
+        nfcUid: form.nfcUid.trim(),
+        status: form.status,
+        startDate: Timestamp.fromDate(new Date(form.startDate + 'T00:00:00')),
+        endDate: Timestamp.fromDate(new Date(form.endDate + 'T00:00:00')),
+        requiredHours: form.requiredHours,
+        remainingHours: Math.max(0, form.requiredHours - intern.completedHours),
+      });
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      style={{ background: 'rgba(13,41,31,0.85)', backdropFilter: 'blur(6px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}
+    >
+      <div
+        className="glass-card w-full max-w-2xl p-8 flex flex-col gap-6 overflow-y-auto"
+        style={{ maxHeight: '90vh' }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-cream text-2xl font-bold">Edit Intern</h2>
+            <p className="text-cream/40 text-xs mt-0.5">{intern.name}</p>
+          </div>
+          <button
+            onClick={onClose} disabled={saving}
+            className="text-cream/50 hover:text-cream text-2xl leading-none transition-colors disabled:opacity-30"
+          >✕</button>
+        </div>
+
+        <form onSubmit={handleSave} className="flex flex-col gap-5">
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Full Name" required>
+              <input type="text" required value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            </FormField>
+            <FormField label="Email">
+              <input type="email" value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+            </FormField>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Student ID" required>
+              <input type="text" required value={form.studentId}
+                onChange={(e) => setForm((f) => ({ ...f, studentId: e.target.value }))} />
+            </FormField>
+            <FormField label="School / University" required>
+              <input type="text" required value={form.school}
+                onChange={(e) => setForm((f) => ({ ...f, school: e.target.value }))} />
+            </FormField>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <FormField label="Course" required>
+              <input type="text" required value={form.course}
+                onChange={(e) => setForm((f) => ({ ...f, course: e.target.value }))} />
+            </FormField>
+            <FormField label="Major" required>
+              <select required value={form.major} onChange={(e) => handleMajorChange(e.target.value)}>
+                {EDIT_MAJORS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.value} — {m.hours}h</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Year Level">
+              <select value={form.year} onChange={(e) => setForm((f) => ({ ...f, year: Number(e.target.value) }))}>
+                {[1, 2, 3].map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </FormField>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Supervisor">
+              <input type="text" value={form.supervisor}
+                onChange={(e) => setForm((f) => ({ ...f, supervisor: e.target.value }))} />
+            </FormField>
+            <FormField label="NFC Card UID" required>
+              <input type="text" required value={form.nfcUid}
+                onChange={(e) => setForm((f) => ({ ...f, nfcUid: e.target.value }))} />
+            </FormField>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Status">
+              <select value={form.status}
+                onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as Intern['status'] }))}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="done">Done</option>
+              </select>
+            </FormField>
+            <FormField label="Required Hours" required>
+              <input type="number" min="0" required value={form.requiredHours || ''}
+                onChange={(e) => handleRequiredHours(Number(e.target.value))} />
+            </FormField>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Start Date" required>
+              <input type="date" required value={form.startDate}
+                onChange={(e) => handleStartDate(e.target.value)} />
+            </FormField>
+            <FormField label="End Date (approx.)">
+              <input type="date" value={form.endDate} disabled />
+            </FormField>
+          </div>
+
+          <div className="px-3 py-2 rounded-lg text-xs text-cream/40 border border-white/10 bg-white/5">
+            Completed: {Math.round(intern.completedHours)}h · Remaining after save: {Math.max(0, form.requiredHours - intern.completedHours)}h
+          </div>
+
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button" onClick={onClose} disabled={saving}
+              className="guest-btn flex-1 py-3 text-cream/70 font-medium text-base text-center disabled:opacity-50"
+            >Cancel</button>
+            <button
+              type="submit" disabled={saving}
+              className="flex-1 py-3 rounded-xl font-semibold text-base text-brand tracking-wide transition-opacity disabled:opacity-50"
+              style={{ background: '#FFFEF9' }}
+            >{saving ? 'Saving…' : 'Save Changes'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab: Interns ─────────────────────────────────────────────────────────────
 
 type InternFilter = 'all' | 'active' | 'clocked' | 'done';
@@ -164,10 +518,11 @@ function fmtHours(h: number) {
   return { h: rounded, d: days };
 }
 
-function InternTab({ interns, loading, onRefresh }: {
+function InternTab({ interns, loading, onRefresh, onEdit }: {
   interns: Intern[];
   loading: boolean;
   onRefresh: () => void;
+  onEdit: (intern: Intern) => void;
 }) {
   const [filter, setFilter] = useState<InternFilter>('all');
   const [exporting, setExporting] = useState(false);
@@ -255,8 +610,8 @@ function InternTab({ interns, loading, onRefresh }: {
             <table className="w-full text-sm">
               <thead className="border-b border-white/10">
                 <tr>
-                  {['Name','Major','Year','School','Status','Clock','Hrs Done','Hrs Left','Start','End'].map((h) => (
-                    <Th key={h}>{h}</Th>
+                  {['Name','Major','Year','School','Status','Clock','Hrs Done','Hrs Left','Start','End',''].map((h, idx) => (
+                    <Th key={idx}>{h}</Th>
                   ))}
                 </tr>
               </thead>
@@ -268,7 +623,7 @@ function InternTab({ interns, loading, onRefresh }: {
                     <Td className="text-cream font-medium">{i.name}</Td>
                     <Td className="text-cream/70">{i.major}</Td>
                     <Td className="text-cream/70">{i.year}</Td>
-                    <Td className="text-cream/60 max-w-[150px] truncate">{i.school}</Td>
+                    <Td className="text-cream/60 max-w-37.5 truncate">{i.school}</Td>
                     <Td><Badge status={i.status} /></Td>
                     <Td><ClockBadge isClockedIn={i.isClockedIn} /></Td>
                     <Td>
@@ -281,6 +636,12 @@ function InternTab({ interns, loading, onRefresh }: {
                     </Td>
                     <Td className="text-cream/50 text-xs">{fmtDate(i.startDate.toDate())}</Td>
                     <Td className="text-cream/50 text-xs">{fmtDate(i.endDate.toDate())}</Td>
+                    <Td>
+                      <button
+                        onClick={() => onEdit(i)}
+                        className="text-xs px-2 py-1 rounded border border-white/15 text-cream/50 hover:text-cream hover:border-white/30 transition-colors"
+                      >Edit</button>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -335,9 +696,9 @@ function GuestTab({ guests, loading, date, onDateChange }: {
                     <Td className="text-cream font-medium">{g.name}</Td>
                     <Td className="text-cream/70">{g.age}</Td>
                     <Td className="text-cream/70">{g.gender}</Td>
-                    <Td className="text-cream/60 max-w-[130px] truncate">{g.organization || '—'}</Td>
+                    <Td className="text-cream/60 max-w-32.5 truncate">{g.organization || '—'}</Td>
                     <Td className="text-cream/60 max-w-[130px] truncate">{g.purpose}</Td>
-                    <Td className="text-cream/60 max-w-[120px] truncate">{g.eventName || '—'}</Td>
+                    <Td className="text-cream/60 max-w-30 truncate">{g.eventName || '—'}</Td>
                     <Td className="text-cream/70">{fmtTime(g.checkInTime)}</Td>
                     <Td className="text-cream/70">{fmtTime(g.checkOutTime)}</Td>
                     <Td className="text-cream/70">{g.hoursVisited != null ? `${g.hoursVisited}h` : '—'}</Td>
@@ -415,37 +776,274 @@ function RecordsTab({ records, loading, date, onDateChange }: {
   );
 }
 
+// ─── Analytics: Chart Primitives ─────────────────────────────────────────────
+
+type DailyPoint = { date: string; count: number; lateCount: number };
+
+function fillAttendanceGaps(raw: DailyPoint[], days = 30): DailyPoint[] {
+  const map = new Map(raw.map((d) => [d.date, d]));
+  return Array.from({ length: days }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (days - 1 - i));
+    const key = d.toISOString().split('T')[0];
+    return map.get(key) ?? { date: key, count: 0, lateCount: 0 };
+  });
+}
+
+function AttendanceTrendChart({ raw }: { raw: DailyPoint[] }) {
+  const data = fillAttendanceGaps(raw, 30);
+  const W = 460, H = 124;
+  const PL = 26, PR = 8, PT = 10, PB = 22;
+  const iW = W - PL - PR, iH = H - PT - PB;
+  const maxY = Math.max(...data.map((d) => d.count), 1);
+
+  const px = (i: number) => PL + (i / (data.length - 1)) * iW;
+  const py = (v: number) => PT + iH - (v / maxY) * iH;
+
+  const attendPts = data.map((d, i) => `${px(i).toFixed(1)},${py(d.count).toFixed(1)}`).join(' ');
+  const latePts   = data.map((d, i) => `${px(i).toFixed(1)},${py(d.lateCount).toFixed(1)}`).join(' ');
+  const areaD = `M ${px(0)},${py(data[0].count)} ` +
+    data.slice(1).map((d, i) => `L ${px(i + 1).toFixed(1)},${py(d.count).toFixed(1)}`).join(' ') +
+    ` L ${px(data.length - 1)},${(PT + iH).toFixed(1)} L ${px(0)},${(PT + iH).toFixed(1)} Z`;
+
+  const yTicks = maxY <= 3
+    ? Array.from({ length: maxY + 1 }, (_, v) => v)
+    : [0, Math.round(maxY / 2), maxY];
+
+  const xTickIdxs: number[] = [];
+  for (let i = 0; i < data.length; i++) {
+    if (i === 0 || i === data.length - 1 || i % 7 === 0) xTickIdxs.push(i);
+  }
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: H }}>
+      <defs>
+        <linearGradient id="attendGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor="#4ade80" stopOpacity="0.2" />
+          <stop offset="100%" stopColor="#4ade80" stopOpacity="0"   />
+        </linearGradient>
+      </defs>
+      {yTicks.map((v) => (
+        <g key={v}>
+          <line x1={PL} x2={W - PR} y1={py(v)} y2={py(v)} stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+          <text x={PL - 3} y={py(v) + 3.5} textAnchor="end" fontSize="8.5" fill="rgba(255,254,249,0.28)">{v}</text>
+        </g>
+      ))}
+      <path d={areaD} fill="url(#attendGrad)" />
+      <polyline points={attendPts} fill="none" stroke="#4ade80"  strokeWidth="1.5" strokeLinejoin="round" />
+      <polyline points={latePts}   fill="none" stroke="#f87171"  strokeWidth="1.5" strokeLinejoin="round" strokeDasharray="3,2" />
+      {data.filter((_, i) => i % 7 === 0).map((d, ii) => (
+        <circle key={d.date} cx={px(ii * 7)} cy={py(d.count)} r="2.2" fill="#4ade80" />
+      ))}
+      {xTickIdxs.map((i) => (
+        <text key={i} x={px(i)} y={H - 3} textAnchor="middle" fontSize="8" fill="rgba(255,254,249,0.28)">
+          {data[i].date.slice(5)}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+function PunctualityDonut({ onTime, late }: { onTime: number; late: number }) {
+  const total = onTime + late;
+  const r = 40, cx = 56, cy = 52;
+  const circ = 2 * Math.PI * r;
+  const pct  = total > 0 ? onTime / total : 1;
+  const dash = pct * circ;
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <svg viewBox="0 0 112 104" width="112" height="104">
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="14" />
+        <circle
+          cx={cx} cy={cy} r={r}
+          fill="none"
+          stroke={pct >= 0.8 ? '#4ade80' : pct >= 0.6 ? '#fbbf24' : '#f87171'}
+          strokeWidth="14"
+          strokeDasharray={`${dash.toFixed(2)} ${(circ - dash).toFixed(2)}`}
+          transform={`rotate(-90 ${cx} ${cy})`}
+          strokeLinecap="butt"
+        />
+        <text x={cx} y={cy - 4}  textAnchor="middle" fontSize="17" fontWeight="700" fill="#fffef9">
+          {Math.round(pct * 100)}%
+        </text>
+        <text x={cx} y={cy + 12} textAnchor="middle" fontSize="8"  fill="rgba(255,254,249,0.4)">
+          ON TIME
+        </text>
+      </svg>
+      <div className="flex gap-5 text-xs">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+          <span className="text-cream/50">{onTime} on time</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-red-400/70" />
+          <span className="text-cream/50">{late} late</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab: Analytics ───────────────────────────────────────────────────────────
 
-function AnalyticsTab({ analytics, hoursByMajor, nearCompletion, loading, onRefresh }: {
+function AnalyticsTab({ analytics, hoursByMajor, nearCompletion, dailyAttendance, loading, onRefresh }: {
   analytics: InternAnalyticsSummary[];
   hoursByMajor: Record<string, number>;
   nearCompletion: Intern[];
+  dailyAttendance: DailyPoint[];
   loading: boolean;
   onRefresh: () => void;
 }) {
+  // ── KPI rollups ──────────────────────────────────────────────────────────────
   const avgAttendance = analytics.length > 0
     ? (analytics.reduce((s, a) => s + a.attendanceRate, 0) / analytics.length).toFixed(1)
     : 0;
-  const avgDaily = analytics.length > 0
-    ? (analytics.reduce((s, a) => s + a.averageDailyHours, 0) / analytics.length).toFixed(2)
-    : 0;
+
+  const totalPresent = analytics.reduce((s, a) => s + a.totalDaysPresent, 0);
+  const totalLate    = analytics.reduce((s, a) => s + a.totalDaysLate,    0);
+  const totalOnTime  = totalPresent - totalLate;
+
+  // ── Progress board: sorted by % completion descending ─────────────────────
+  const progressData = [...analytics]
+    .map((a) => {
+      const required = a.completedHours + a.remainingHours;
+      const pct = required > 0 ? Math.round((a.completedHours / required) * 100) : 0;
+      return { name: a.internName, major: a.major, pct, completed: a.completedHours, required };
+    })
+    .sort((a, b) => b.pct - a.pct);
+
+  // ── Tardiness leaderboard: top 8 latecomers ──────────────────────────────
+  const lateData = [...analytics]
+    .filter((a) => a.totalDaysLate > 0)
+    .sort((a, b) => b.totalDaysLate - a.totalDaysLate)
+    .slice(0, 8);
+  const maxLate = lateData.length > 0 ? lateData[0].totalDaysLate : 1;
+
+  // ── Hours by major ────────────────────────────────────────────────────────
   const maxHours = Math.max(...Object.values(hoursByMajor), 1);
 
   return (
     <div className="flex flex-col gap-6">
       {loading ? <Spinner /> : (
         <>
-          {/* Overview */}
+          {/* Row 1: KPI stats */}
           <div className="grid grid-cols-4 gap-4">
             <Stat label="Interns Tracked"  value={analytics.length} />
             <Stat label="Avg Attendance"   value={`${avgAttendance}%`} />
-            <Stat label="Avg Daily Hours"  value={`${avgDaily}h`} />
+            <Stat label="Total Days Late"  value={totalLate} sub={`${totalPresent} total check-ins`} />
             <Stat label="Near Completion"  value={nearCompletion.length} sub="within 20h remaining" />
           </div>
 
+          {/* Row 2: Attendance trend + Punctuality donut */}
+          <div className="grid grid-cols-3 gap-6">
+            <div className="col-span-2 glass-card p-6 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-cream font-semibold">30-Day Attendance Trend</h3>
+                  <p className="text-cream/35 text-xs mt-0.5">Daily check-ins (green) vs late arrivals (red dashed)</p>
+                </div>
+                <div className="flex gap-4 text-xs text-cream/40">
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-4 h-0.5 bg-emerald-400 rounded" />
+                    Present
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-4 h-px bg-red-400/70" style={{ backgroundImage: 'repeating-linear-gradient(90deg,rgba(248,113,113,0.7) 0,rgba(248,113,113,0.7) 3px,transparent 3px,transparent 5px)' }} />
+                    Late
+                  </span>
+                </div>
+              </div>
+              {dailyAttendance.length === 0 && analytics.length === 0
+                ? <p className="text-cream/25 text-sm">No data yet</p>
+                : <AttendanceTrendChart raw={dailyAttendance} />
+              }
+            </div>
+
+            <div className="glass-card p-6 flex flex-col gap-4">
+              <div>
+                <h3 className="text-cream font-semibold">Punctuality</h3>
+                <p className="text-cream/35 text-xs mt-0.5">All-time on-time rate</p>
+              </div>
+              <div className="flex flex-1 items-center justify-center">
+                <PunctualityDonut onTime={totalOnTime} late={totalLate} />
+              </div>
+            </div>
+          </div>
+
+          {/* Row 3: Progress board + Tardiness ranking */}
           <div className="grid grid-cols-2 gap-6">
-            {/* Hours by major bar chart */}
+            {/* Hours progress per intern */}
+            <div className="glass-card p-6 flex flex-col gap-4">
+              <div>
+                <h3 className="text-cream font-semibold">Hours Progress</h3>
+                <p className="text-cream/35 text-xs mt-0.5">Completed vs required hours per intern</p>
+              </div>
+              {progressData.length === 0 ? (
+                <p className="text-cream/25 text-sm">No data yet</p>
+              ) : (
+                <div className="flex flex-col gap-3 overflow-y-auto" style={{ maxHeight: 260 }}>
+                  {progressData.map((p) => (
+                    <div key={p.name} className="flex items-center gap-3">
+                      <div className="w-24 shrink-0">
+                        <p className="text-cream/80 text-xs font-medium truncate leading-tight">
+                          {p.name.split(' ')[0]}
+                        </p>
+                        <p className="text-cream/30 text-[10px]">{p.major}</p>
+                      </div>
+                      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${p.pct}%`,
+                            background: p.pct >= 80 ? '#4ade80' : p.pct >= 50 ? '#fbbf24' : '#f87171',
+                          }}
+                        />
+                      </div>
+                      <span className="text-cream/50 text-xs w-9 text-right shrink-0">{p.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Tardiness leaderboard */}
+            <div className="glass-card p-6 flex flex-col gap-4">
+              <div>
+                <h3 className="text-cream font-semibold">Tardiness Ranking</h3>
+                <p className="text-cream/35 text-xs mt-0.5">Interns with the most late arrivals</p>
+              </div>
+              {lateData.length === 0 ? (
+                <p className="text-cream/25 text-sm">No late arrivals recorded</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {lateData.map((a, idx) => (
+                    <div key={a.internId} className="flex items-center gap-3">
+                      <span className="text-cream/25 text-xs w-4 shrink-0 text-right">{idx + 1}</span>
+                      <div className="w-24 shrink-0">
+                        <p className="text-cream/80 text-xs font-medium truncate leading-tight">
+                          {a.internName.split(' ')[0]}
+                        </p>
+                        <p className="text-cream/30 text-[10px]">{a.major}</p>
+                      </div>
+                      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+                        <div
+                          className="h-full rounded-full bg-red-400/70 transition-all"
+                          style={{ width: `${(a.totalDaysLate / maxLate) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-red-400/80 text-xs w-12 text-right shrink-0">
+                        {a.totalDaysLate}x late
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Row 4: Hours by major + Near completion */}
+          <div className="grid grid-cols-2 gap-6">
             <div className="glass-card p-6 flex flex-col gap-4">
               <h3 className="text-cream font-semibold">Hours Rendered by Major</h3>
               {Object.keys(hoursByMajor).length === 0 ? (
@@ -466,7 +1064,6 @@ function AnalyticsTab({ analytics, hoursByMajor, nearCompletion, loading, onRefr
               ))}
             </div>
 
-            {/* Near completion */}
             <div className="glass-card p-6 flex flex-col gap-4">
               <h3 className="text-cream font-semibold">Near Completion</h3>
               {nearCompletion.length === 0 ? (
@@ -486,7 +1083,7 @@ function AnalyticsTab({ analytics, hoursByMajor, nearCompletion, loading, onRefr
             </div>
           </div>
 
-          {/* Per-intern performance table */}
+          {/* Row 5: Per-intern performance table */}
           <div className="glass-card overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
               <h3 className="text-cream font-semibold">Intern Performance</h3>
@@ -542,6 +1139,8 @@ export default function AdminPage() {
   const [interns, setInterns]         = useState<Intern[]>([]);
   const [internsLoaded, setInternsLoaded] = useState(false);
   const [internsLoading, setInternsLoading] = useState(false);
+  const [authPending, setAuthPending]     = useState<Intern | null>(null);
+  const [editingIntern, setEditingIntern] = useState<Intern | null>(null);
 
   const [guestDate, setGuestDate]   = useState(todayStr);
   const [guests, setGuests]         = useState<Guest[]>([]);
@@ -551,10 +1150,11 @@ export default function AdminPage() {
   const [records, setRecords]           = useState<TimeRecord[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
 
-  const [analytics, setAnalytics]         = useState<InternAnalyticsSummary[]>([]);
-  const [hoursByMajor, setHoursByMajor]   = useState<Record<string, number>>({});
-  const [nearCompletion, setNearCompletion] = useState<Intern[]>([]);
-  const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
+  const [analytics, setAnalytics]               = useState<InternAnalyticsSummary[]>([]);
+  const [hoursByMajor, setHoursByMajor]         = useState<Record<string, number>>({});
+  const [nearCompletion, setNearCompletion]     = useState<Intern[]>([]);
+  const [dailyAttendance, setDailyAttendance]   = useState<DailyPoint[]>([]);
+  const [analyticsLoaded, setAnalyticsLoaded]   = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const fetchInterns = useCallback(async () => {
@@ -580,14 +1180,18 @@ export default function AdminPage() {
   const fetchAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
     try {
-      const [a, hbm, nc] = await Promise.all([
+      const from30 = new Date();
+      from30.setDate(from30.getDate() - 29);
+      const [a, hbm, nc, da] = await Promise.all([
         getAllInternAnalytics(),
         getHoursByMajor(),
         getInternsNearCompletion(),
+        getDailyAttendance(from30, new Date()),
       ]);
       setAnalytics(a);
       setHoursByMajor(hbm);
       setNearCompletion(nc);
+      setDailyAttendance(da);
       setAnalyticsLoaded(true);
     } finally { setAnalyticsLoading(false); }
   }, []);
@@ -661,7 +1265,20 @@ export default function AdminPage() {
 
         {/* Tab content */}
         {tab === 'interns' && (
-          <InternTab interns={interns} loading={internsLoading} onRefresh={fetchInterns} />
+          <InternTab interns={interns} loading={internsLoading} onRefresh={fetchInterns} onEdit={setAuthPending} />
+        )}
+        {authPending && (
+          <NfcAuthGate
+            onAuthorized={() => { setEditingIntern(authPending); setAuthPending(null); }}
+            onCancel={() => setAuthPending(null)}
+          />
+        )}
+        {editingIntern && (
+          <EditInternModal
+            intern={editingIntern}
+            onClose={() => setEditingIntern(null)}
+            onSaved={fetchInterns}
+          />
         )}
         {tab === 'guests' && (
           <GuestTab
@@ -684,6 +1301,7 @@ export default function AdminPage() {
             analytics={analytics}
             hoursByMajor={hoursByMajor}
             nearCompletion={nearCompletion}
+            dailyAttendance={dailyAttendance}
             loading={analyticsLoading}
             onRefresh={fetchAnalytics}
           />

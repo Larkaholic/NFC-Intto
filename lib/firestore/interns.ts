@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, where, orderBy, runTransaction, Timestamp, serverTimestamp,
+  query, where, orderBy, runTransaction, writeBatch, Timestamp, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calcEndDate } from '../utils/dates';
@@ -289,4 +289,15 @@ export async function recalcAllInternHours(): Promise<void> {
       updatedAt: serverTimestamp(),
     });
   }));
+}
+
+/** Batch-update internName across all time records when an intern is renamed */
+export async function propagateInternNameUpdate(internId: string, newName: string): Promise<void> {
+  const records = await getTimeRecordsByIntern(internId);
+  if (records.length === 0) return;
+  const batch = writeBatch(db);
+  for (const r of records) {
+    batch.update(doc(db, TIME_RECORDS, r.id), { internName: newName });
+  }
+  await batch.commit();
 }

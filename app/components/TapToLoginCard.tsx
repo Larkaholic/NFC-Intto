@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Timestamp } from 'firebase/firestore/lite';
+import { Timestamp } from 'firebase/firestore';
 import { createIntern, getInternByNfc, clockIn, clockOut } from '@/lib/firestore';
 import { calcEndDate } from '@/lib/utils/dates';
+import { ATTENDANCE } from '@/lib/attendance-config';
 
 function NFCWaveIcon() {
   return (
@@ -16,12 +17,9 @@ function NFCWaveIcon() {
   );
 }
 
-const MAJORS = [
-  { value: 'IT',      hours: 350 },
-  { value: 'MMA',     hours: 200 },
-  { value: 'Net Sec', hours: 350 },
-  { value: 'CS',      hours: 250 },
-];
+const MAJORS = (Object.entries(ATTENDANCE.baseHours) as [string, number][]).map(
+  ([value, hours]) => ({ value, hours })
+);
 
 const EMPTY_FORM = {
   name: '',
