@@ -22,8 +22,13 @@ const { createInterceptor, localhostUrl } = createHandler({
 
 let stopIntercept: (() => void) | undefined;
 
+if (app.isPackaged) {
+  app.setLoginItemSettings({ openAtLogin: true });
+}
+
 const createWindow = async () => {
   mainWindow = new BrowserWindow({
+    fullscreen: app.isPackaged,
     width: 1600,
     height: 800,
     webPreferences: {
@@ -34,7 +39,9 @@ const createWindow = async () => {
 
   stopIntercept = await createInterceptor({ session: mainWindow.webContents.session });
 
-  mainWindow.once('ready-to-show', () => mainWindow?.webContents.openDevTools());
+  mainWindow.once('ready-to-show', () => {
+    if (!app.isPackaged) mainWindow?.webContents.openDevTools();
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
