@@ -4,3 +4,4 @@ export * from './guests';
 export * from './events';
 export * from './analytics';
 export * from './staff';
+export * from './closedDays';

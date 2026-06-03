@@ -76,13 +76,15 @@ export function isPhHoliday(date: Date): boolean {
  * Counts Mon–Sat working days (skipping Sundays and Philippine holidays)
  * from startDateStr until totalDays are accumulated, then returns that date.
  */
-export function calcEndDate(startDateStr: string, hours: number): string {
+export function calcEndDate(startDateStr: string, hours: number, closedDates: string[] = []): string {
   if (!startDateStr || !hours) return '';
   const totalDays = Math.ceil(hours / 8);
+  const closedSet = new Set(closedDates);
   const date = new Date(startDateStr + 'T00:00:00');
   let counted = 0;
   while (true) {
-    if (date.getDay() !== 0 && !isPhHoliday(date)) {
+    const dateStr = date.toISOString().split('T')[0];
+    if (date.getDay() !== 0 && !isPhHoliday(date) && !closedSet.has(dateStr)) {
       counted++;
       if (counted >= totalDays) break;
     }

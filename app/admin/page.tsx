@@ -21,10 +21,25 @@ import {
   updateIntern,
   propagateInternNameUpdate,
   getStaffByNfc,
+  clockIn,
+  clockOut,
+  updateTimeRecord,
+  recalcAllInternEndDates,
+  getClosedDays,
+  addClosedDay,
+  removeClosedDay,
 } from '@/lib/firestore';
-import type { Intern, Guest, TimeRecord, InternAnalyticsSummary } from '@/lib/firestore';
+import type { Intern, Guest, TimeRecord, InternAnalyticsSummary, ClosedDay } from '@/lib/firestore';
 
-type Tab = 'interns' | 'guests' | 'records' | 'analytics';
+type Tab = 'interns' | 'guests' | 'records' | 'analytics' | 'closedDays';
+
+type AuthAction =
+  | { type: 'edit';              intern: Intern }
+  | { type: 'clock-in';         intern: Intern }
+  | { type: 'clock-out';        intern: Intern }
+  | { type: 'edit-record';      record: TimeRecord; intern: Intern }
+  | { type: 'add-closed-day';   date: string; reason: string }
+  | { type: 'remove-closed-day'; id: string; date: string };
 
 const todayStr = new Date().toISOString().split('T')[0];
 
@@ -508,6 +523,149 @@ function EditInternModal({ intern, onClose, onSaved }: {
   );
 }
 
+// ─── Manual Clock Modal ───────────────────────────────────────────────────────
+
+function ManualClockModal({ type, intern, onClose, onDone }: {
+  type: 'in' | 'out';
+  intern: Intern;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const now = new Date();
+  const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const [dateTime, setDateTime] = useState(localISO);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const selected = new Date(dateTime);
+      if (type === 'in') await clockIn(intern.id, selected);
+      else await clockOut(intern.id, selected);
+      onDone();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Operation failed');
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      style={{ background: 'rgba(13,41,31,0.85)', backdropFilter: 'blur(6px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}
+    >
+      <div className="glass-card w-full max-w-sm p-8 flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-cream text-xl font-bold">Manual Clock {type === 'in' ? 'In' : 'Out'}</h2>
+            <p className="text-cream/40 text-sm mt-0.5">{intern.name}</p>
+          </div>
+          <button onClick={onClose} disabled={saving} className="text-cream/50 hover:text-cream text-2xl leading-none transition-colors disabled:opacity-30">✕</button>
+        </div>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+          <FormField label={`Clock ${type === 'in' ? 'In' : 'Out'} Time`} required>
+            <input type="datetime-local" required value={dateTime} onChange={(e) => setDateTime(e.target.value)} />
+          </FormField>
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} disabled={saving}
+              className="guest-btn flex-1 py-3 text-cream/70 font-medium text-base text-center disabled:opacity-50">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="flex-1 py-3 rounded-xl font-semibold text-base text-brand tracking-wide transition-opacity disabled:opacity-50"
+              style={{ background: '#FFFEF9' }}>
+              {saving ? 'Processing…' : `Clock ${type === 'in' ? 'In' : 'Out'}`}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Edit Time Record Modal ────────────────────────────────────────────────────
+
+function EditTimeRecordModal({ record, intern, onClose, onSaved }: {
+  record: TimeRecord;
+  intern: Intern;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  function toLocal(ts: { toDate: () => Date }) {
+    const d = ts.toDate();
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  }
+
+  const [timeIn,  setTimeIn]  = useState(toLocal(record.timeIn));
+  const [timeOut, setTimeOut] = useState(record.timeOut ? toLocal(record.timeOut) : '');
+  const [notes,   setNotes]   = useState(record.notes || '');
+  const [saving,  setSaving]  = useState(false);
+  const [error,   setError]   = useState('');
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    const newTimeIn  = new Date(timeIn);
+    const newTimeOut = timeOut ? new Date(timeOut) : null;
+    if (newTimeOut && newTimeOut <= newTimeIn) { setError('Clock-out must be after clock-in'); return; }
+    setSaving(true);
+    try {
+      await updateTimeRecord(record.id, intern.id, newTimeIn, newTimeOut, notes);
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save');
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      style={{ background: 'rgba(13,41,31,0.85)', backdropFilter: 'blur(6px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}
+    >
+      <div className="glass-card w-full max-w-md p-8 flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-cream text-xl font-bold">Edit Time Record</h2>
+            <p className="text-cream/40 text-sm mt-0.5">{intern.name} · {record.date}</p>
+          </div>
+          <button onClick={onClose} disabled={saving} className="text-cream/50 hover:text-cream text-2xl leading-none transition-colors disabled:opacity-30">✕</button>
+        </div>
+        <form onSubmit={handleSave} className="flex flex-col gap-5">
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Clock In Time" required>
+              <input type="datetime-local" required value={timeIn} onChange={(e) => setTimeIn(e.target.value)} />
+            </FormField>
+            <FormField label="Clock Out Time">
+              <input type="datetime-local" value={timeOut} onChange={(e) => setTimeOut(e.target.value)} />
+            </FormField>
+          </div>
+          <FormField label="Notes">
+            <input type="text" value={notes} placeholder="Optional note" onChange={(e) => setNotes(e.target.value)} />
+          </FormField>
+          <div className="px-3 py-2 rounded-lg text-xs text-cream/40 border border-white/10 bg-white/5">
+            Penalties and intern hour totals recalculate automatically.
+          </div>
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} disabled={saving}
+              className="guest-btn flex-1 py-3 text-cream/70 font-medium text-base text-center disabled:opacity-50">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="flex-1 py-3 rounded-xl font-semibold text-base text-brand tracking-wide transition-opacity disabled:opacity-50"
+              style={{ background: '#FFFEF9' }}>
+              {saving ? 'Saving…' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab: Interns ─────────────────────────────────────────────────────────────
 
 type InternFilter = 'all' | 'active' | 'clocked' | 'done';
@@ -518,11 +676,13 @@ function fmtHours(h: number) {
   return { h: rounded, d: days };
 }
 
-function InternTab({ interns, loading, onRefresh, onEdit }: {
+function InternTab({ interns, loading, onRefresh, onEdit, onClockIn, onClockOut }: {
   interns: Intern[];
   loading: boolean;
   onRefresh: () => void;
   onEdit: (intern: Intern) => void;
+  onClockIn: (intern: Intern) => void;
+  onClockOut: (intern: Intern) => void;
 }) {
   const [filter, setFilter] = useState<InternFilter>('all');
   const [exporting, setExporting] = useState(false);
@@ -637,10 +797,23 @@ function InternTab({ interns, loading, onRefresh, onEdit }: {
                     <Td className="text-cream/50 text-xs">{fmtDate(i.startDate.toDate())}</Td>
                     <Td className="text-cream/50 text-xs">{fmtDate(i.endDate.toDate())}</Td>
                     <Td>
-                      <button
-                        onClick={() => onEdit(i)}
-                        className="text-xs px-2 py-1 rounded border border-white/15 text-cream/50 hover:text-cream hover:border-white/30 transition-colors"
-                      >Edit</button>
+                      <div className="flex gap-1.5 flex-wrap">
+                        <button
+                          onClick={() => onEdit(i)}
+                          className="text-xs px-2 py-1 rounded border border-white/15 text-cream/50 hover:text-cream hover:border-white/30 transition-colors"
+                        >Edit</button>
+                        {!i.isClockedIn ? (
+                          <button
+                            onClick={() => onClockIn(i)}
+                            className="text-xs px-2 py-1 rounded border border-emerald-400/30 text-emerald-400/60 hover:text-emerald-400 hover:border-emerald-400/60 transition-colors"
+                          >Clock In</button>
+                        ) : (
+                          <button
+                            onClick={() => onClockOut(i)}
+                            className="text-xs px-2 py-1 rounded border border-amber-400/30 text-amber-400/60 hover:text-amber-400 hover:border-amber-400/60 transition-colors"
+                          >Clock Out</button>
+                        )}
+                      </div>
                     </Td>
                   </tr>
                 ))}
@@ -716,11 +889,12 @@ function GuestTab({ guests, loading, date, onDateChange }: {
 
 // ─── Tab: Time Records ────────────────────────────────────────────────────────
 
-function RecordsTab({ records, loading, date, onDateChange }: {
+function RecordsTab({ records, loading, date, onDateChange, onEditRecord }: {
   records: TimeRecord[];
   loading: boolean;
   date: string;
   onDateChange: (d: string) => void;
+  onEditRecord: (record: TimeRecord) => void;
 }) {
   const lateCount  = records.filter((r) => r.isLate).length;
   const totalHours = records.reduce((s, r) => s + (r.hoursRendered ?? 0), 0);
@@ -741,8 +915,8 @@ function RecordsTab({ records, loading, date, onDateChange }: {
             <table className="w-full text-sm">
               <thead className="border-b border-white/10">
                 <tr>
-                  {['Intern','Major','Time In','Time Out','Hours','Status','Min Late','Penalty','Notes'].map((h) => (
-                    <Th key={h}>{h}</Th>
+                  {['Intern','Major','Time In','Time Out','Hours','Status','Min Late','Penalty','Notes',''].map((h, idx) => (
+                    <Th key={idx}>{h}</Th>
                   ))}
                 </tr>
               </thead>
@@ -765,11 +939,94 @@ function RecordsTab({ records, loading, date, onDateChange }: {
                     <Td className="text-cream/70">{r.minutesLate > 0 ? `${r.minutesLate}m` : '—'}</Td>
                     <Td className="text-cream/70">{r.penaltyHours > 0 ? `+${r.penaltyHours}h` : '—'}</Td>
                     <Td className="text-cream/40 text-xs">{r.notes || '—'}</Td>
+                    <Td>
+                      <button
+                        onClick={() => onEditRecord(r)}
+                        className="text-xs px-2 py-1 rounded border border-white/15 text-cream/50 hover:text-cream hover:border-white/30 transition-colors"
+                      >Edit</button>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Tab: Closed Days ────────────────────────────────────────────────────────
+
+function ClosedDaysTab({ closedDays, loading, onAddDay, onRemoveDay, onRefresh }: {
+  closedDays: ClosedDay[];
+  loading: boolean;
+  onAddDay: (date: string, reason: string) => void;
+  onRemoveDay: (id: string, date: string) => void;
+  onRefresh: () => void;
+}) {
+  const [newDate,   setNewDate]   = useState('');
+  const [newReason, setNewReason] = useState('');
+
+  function handleAdd() {
+    if (!newDate) return;
+    onAddDay(newDate, newReason.trim() || 'No classes');
+    setNewDate('');
+    setNewReason('');
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="glass-card p-6 flex flex-col gap-4">
+        <div>
+          <h3 className="text-cream font-semibold">Mark Closed Day</h3>
+          <p className="text-cream/40 text-xs mt-1">
+            Closed days are skipped in end-date calculations. All active intern schedules recalculate after saving.
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-4 items-end">
+          <FormField label="Date" required>
+            <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
+          </FormField>
+          <FormField label="Reason">
+            <input type="text" placeholder="No classes" value={newReason} onChange={(e) => setNewReason(e.target.value)} />
+          </FormField>
+          <button
+            onClick={handleAdd}
+            disabled={!newDate}
+            className="py-2.5 rounded-xl font-semibold text-sm text-brand disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: '#FFFEF9' }}
+          >Mark Day</button>
+        </div>
+      </div>
+
+      <div className="glass-card overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <h3 className="text-cream font-semibold">Closed Days ({closedDays.length})</h3>
+          <button onClick={onRefresh} className="text-cream/40 hover:text-cream/70 text-sm transition-colors">Refresh</button>
+        </div>
+        {loading ? <Spinner /> : closedDays.length === 0 ? (
+          <p className="text-cream/30 text-sm text-center py-12">No closed days marked</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="border-b border-white/10">
+              <tr>{['Date', 'Reason', ''].map((h, idx) => <Th key={idx}>{h}</Th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {closedDays.map((d) => (
+                <tr key={d.id} className="hover:bg-white/5 transition-colors">
+                  <Td className="text-cream font-medium">{d.date}</Td>
+                  <Td className="text-cream/60">{d.reason || '—'}</Td>
+                  <Td>
+                    <button
+                      onClick={() => onRemoveDay(d.id, d.date)}
+                      className="text-xs px-2 py-1 rounded border border-red-400/25 text-red-400/60 hover:text-red-400 hover:border-red-400/50 transition-colors"
+                    >Remove</button>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </div>
@@ -1139,8 +1396,10 @@ export default function AdminPage() {
   const [interns, setInterns]         = useState<Intern[]>([]);
   const [internsLoaded, setInternsLoaded] = useState(false);
   const [internsLoading, setInternsLoading] = useState(false);
-  const [authPending, setAuthPending]     = useState<Intern | null>(null);
-  const [editingIntern, setEditingIntern] = useState<Intern | null>(null);
+  const [pendingAction,  setPendingAction]  = useState<AuthAction | null>(null);
+  const [editingIntern,  setEditingIntern]  = useState<Intern | null>(null);
+  const [manualClocking, setManualClocking] = useState<{ type: 'in' | 'out'; intern: Intern } | null>(null);
+  const [editingRecord,  setEditingRecord]  = useState<{ record: TimeRecord; intern: Intern } | null>(null);
 
   const [guestDate, setGuestDate]   = useState(todayStr);
   const [guests, setGuests]         = useState<Guest[]>([]);
@@ -1156,6 +1415,10 @@ export default function AdminPage() {
   const [dailyAttendance, setDailyAttendance]   = useState<DailyPoint[]>([]);
   const [analyticsLoaded, setAnalyticsLoaded]   = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
+  const [closedDays,        setClosedDays]        = useState<ClosedDay[]>([]);
+  const [closedDaysLoaded,  setClosedDaysLoaded]  = useState(false);
+  const [closedDaysLoading, setClosedDaysLoading] = useState(false);
 
   const fetchInterns = useCallback(async () => {
     setInternsLoading(true);
@@ -1175,6 +1438,12 @@ export default function AdminPage() {
     setRecordsLoading(true);
     try { setRecords(await getTimeRecordsByDate(date)); }
     finally { setRecordsLoading(false); }
+  }, []);
+
+  const fetchClosedDays = useCallback(async () => {
+    setClosedDaysLoading(true);
+    try { setClosedDays(await getClosedDays()); setClosedDaysLoaded(true); }
+    finally { setClosedDaysLoading(false); }
   }, []);
 
   const fetchAnalytics = useCallback(async () => {
@@ -1200,10 +1469,11 @@ export default function AdminPage() {
     // Each fetch function calls setLoading(true) synchronously then awaits data.
     // This is React's own documented data-fetching pattern, so we suppress the rule.
     /* eslint-disable react-hooks/set-state-in-effect */
-    if (tab === 'interns'   && !internsLoaded)   fetchInterns();
-    if (tab === 'guests')                        fetchGuests(guestDate);
-    if (tab === 'records')                       fetchRecords(recordDate);
-    if (tab === 'analytics' && !analyticsLoaded) fetchAnalytics();
+    if (tab === 'interns'    && !internsLoaded)    fetchInterns();
+    if (tab === 'guests')                          fetchGuests(guestDate);
+    if (tab === 'records')                         fetchRecords(recordDate);
+    if (tab === 'analytics'  && !analyticsLoaded)  fetchAnalytics();
+    if (tab === 'closedDays' && !closedDaysLoaded) fetchClosedDays();
     /* eslint-enable react-hooks/set-state-in-effect */
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -1214,10 +1484,11 @@ export default function AdminPage() {
   }
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: 'interns',   label: 'Interns' },
-    { id: 'guests',    label: 'Guests' },
-    { id: 'records',   label: 'Time Records' },
-    { id: 'analytics', label: 'Analytics' },
+    { id: 'interns',    label: 'Interns' },
+    { id: 'guests',     label: 'Guests' },
+    { id: 'records',    label: 'Time Records' },
+    { id: 'analytics',  label: 'Analytics' },
+    { id: 'closedDays', label: 'Closed Days' },
   ];
 
   return (
@@ -1265,12 +1536,45 @@ export default function AdminPage() {
 
         {/* Tab content */}
         {tab === 'interns' && (
-          <InternTab interns={interns} loading={internsLoading} onRefresh={fetchInterns} onEdit={setAuthPending} />
+          <InternTab
+            interns={interns}
+            loading={internsLoading}
+            onRefresh={fetchInterns}
+            onEdit={(i) => setPendingAction({ type: 'edit', intern: i })}
+            onClockIn={(i) => setPendingAction({ type: 'clock-in', intern: i })}
+            onClockOut={(i) => setPendingAction({ type: 'clock-out', intern: i })}
+          />
         )}
-        {authPending && (
+        {pendingAction && (
           <NfcAuthGate
-            onAuthorized={() => { setEditingIntern(authPending); setAuthPending(null); }}
-            onCancel={() => setAuthPending(null)}
+            onAuthorized={() => {
+              const action = pendingAction;
+              setPendingAction(null);
+              if (action.type === 'edit') {
+                setEditingIntern(action.intern);
+              } else if (action.type === 'clock-in' || action.type === 'clock-out') {
+                setManualClocking({ type: action.type === 'clock-in' ? 'in' : 'out', intern: action.intern });
+              } else if (action.type === 'edit-record') {
+                setEditingRecord({ record: action.record, intern: action.intern });
+              } else if (action.type === 'add-closed-day') {
+                (async () => {
+                  await addClosedDay(action.date, action.reason);
+                  const days = await getClosedDays();
+                  setClosedDays(days);
+                  await recalcAllInternEndDates(days.map((d) => d.date));
+                  await fetchInterns();
+                })().catch(console.error);
+              } else if (action.type === 'remove-closed-day') {
+                (async () => {
+                  await removeClosedDay(action.id);
+                  const days = await getClosedDays();
+                  setClosedDays(days);
+                  await recalcAllInternEndDates(days.map((d) => d.date));
+                  await fetchInterns();
+                })().catch(console.error);
+              }
+            }}
+            onCancel={() => setPendingAction(null)}
           />
         )}
         {editingIntern && (
@@ -1278,6 +1582,22 @@ export default function AdminPage() {
             intern={editingIntern}
             onClose={() => setEditingIntern(null)}
             onSaved={fetchInterns}
+          />
+        )}
+        {manualClocking && (
+          <ManualClockModal
+            type={manualClocking.type}
+            intern={manualClocking.intern}
+            onClose={() => setManualClocking(null)}
+            onDone={fetchInterns}
+          />
+        )}
+        {editingRecord && (
+          <EditTimeRecordModal
+            record={editingRecord.record}
+            intern={editingRecord.intern}
+            onClose={() => setEditingRecord(null)}
+            onSaved={() => { fetchInterns(); fetchRecords(recordDate); }}
           />
         )}
         {tab === 'guests' && (
@@ -1294,6 +1614,19 @@ export default function AdminPage() {
             loading={recordsLoading}
             date={recordDate}
             onDateChange={(d) => { setRecordDate(d); fetchRecords(d); }}
+            onEditRecord={(r) => {
+              const intern = interns.find((i) => i.id === r.internId);
+              if (intern) setPendingAction({ type: 'edit-record', record: r, intern });
+            }}
+          />
+        )}
+        {tab === 'closedDays' && (
+          <ClosedDaysTab
+            closedDays={closedDays}
+            loading={closedDaysLoading}
+            onAddDay={(date, reason) => setPendingAction({ type: 'add-closed-day', date, reason })}
+            onRemoveDay={(id, date) => setPendingAction({ type: 'remove-closed-day', id, date })}
+            onRefresh={fetchClosedDays}
           />
         )}
         {tab === 'analytics' && (
