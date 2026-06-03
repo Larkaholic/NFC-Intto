@@ -1,7 +1,7 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc,
   query, where, orderBy, Timestamp, serverTimestamp,
-} from 'firebase/firestore/lite';
+} from 'firebase/firestore';
 import { db } from '../firebase';
 import type { Guest, GuestCreate, GuestUpdate } from './types';
 

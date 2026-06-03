@@ -1,7 +1,8 @@
 import {
   collection, getDocs, query, where, orderBy, Timestamp,
-} from 'firebase/firestore/lite';
+} from 'firebase/firestore';
 import { db } from '../firebase';
+import { isPhHoliday } from '../utils/dates';
 import type {
   Intern, TimeRecord, Guest,
   InternAnalyticsSummary, GuestAnalyticsSummary, Gender,
@@ -214,12 +215,12 @@ function ageGroup(age: number): string {
   return '60+';
 }
 
+// Mon–Sat, excluding Philippine holidays — mirrors calcEndDate in utils/dates.ts
 function countWorkingDays(from: Date, to: Date): number {
   let count = 0;
   const cur = new Date(from);
   while (cur <= to) {
-    const day = cur.getDay();
-    if (day !== 0 && day !== 6) count++;
+    if (cur.getDay() !== 0 && !isPhHoliday(cur)) count++;
     cur.setDate(cur.getDate() + 1);
   }
   return count;

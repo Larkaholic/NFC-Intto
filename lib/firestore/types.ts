@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase/firestore/lite';
+import { Timestamp } from 'firebase/firestore';
 
 // ─── Intern ──────────────────────────────────────────────────────────────────
 

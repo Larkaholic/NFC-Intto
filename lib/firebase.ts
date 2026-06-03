@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore/lite';
+import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 
@@ -15,7 +15,7 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// firestore/lite uses plain REST HTTP — no WebChannel, works in Electron
+// Standard Firestore SDK — supports runTransaction for atomic writes
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 
