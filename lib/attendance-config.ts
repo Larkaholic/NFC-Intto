@@ -6,7 +6,7 @@ export const ATTENDANCE = {
   /** Required internship hours per major */
   baseHours: {
     IT: 350,
-    MMA: 250,
+    MMA: 200,
     'Net Sec': 350,
     CS: 250,
   } as Record<string, number>,

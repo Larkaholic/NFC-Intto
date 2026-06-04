@@ -936,8 +936,17 @@ function RecordsTab({ records, loading, date, onDateChange, onEditRecord }: {
                         : <span className="text-xs text-emerald-400">On Time</span>
                       }
                     </Td>
-                    <Td className="text-cream/70">{r.minutesLate > 0 ? `${r.minutesLate}m` : '—'}</Td>
-                    <Td className="text-cream/70">{r.penaltyHours > 0 ? `+${r.penaltyHours}h` : '—'}</Td>
+                    <Td className="text-cream/70">
+                      {r.minutesLate > 0 && <span className="text-red-400">{r.minutesLate}m late</span>}
+                      {r.minutesLate > 0 && (r.minutesEarlyOut ?? 0) > 0 && <br />}
+                      {(r.minutesEarlyOut ?? 0) > 0 && <span className="text-amber-400">{r.minutesEarlyOut}m early</span>}
+                      {r.minutesLate === 0 && (r.minutesEarlyOut ?? 0) === 0 && '—'}
+                    </Td>
+                    <Td>
+                      {r.penaltyHours > 0 && <span className="text-red-400 text-xs font-medium block">+{r.penaltyHours}h (late)</span>}
+                      {(r.earlyOutPenaltyHours ?? 0) > 0 && <span className="text-amber-400 text-xs font-medium block">+{r.earlyOutPenaltyHours}h (early out)</span>}
+                      {r.penaltyHours === 0 && (r.earlyOutPenaltyHours ?? 0) === 0 && <span className="text-cream/40">—</span>}
+                    </Td>
                     <Td className="text-cream/40 text-xs">{r.notes || '—'}</Td>
                     <Td>
                       <button
