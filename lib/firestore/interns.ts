@@ -171,7 +171,12 @@ export async function clockOut(internId: string, atTime?: Date): Promise<void> {
     if (!intern.isClockedIn) throw new Error('Intern is not clocked in');
 
     const timeIn = (recordSnap.data().timeIn as Timestamp).toDate();
-    const hoursRendered = (timeOut.getTime() - timeIn.getTime()) / (1000 * 60 * 60);
+    const rawHours = (timeOut.getTime() - timeIn.getTime()) / (1000 * 60 * 60);
+    // Deduct the 12:00–13:00 lunch window if the session overlaps it
+    const lunchStart = new Date(timeIn); lunchStart.setHours(12, 0, 0, 0);
+    const lunchEnd   = new Date(timeIn); lunchEnd.setHours(13, 0, 0, 0);
+    const lunchMs    = Math.max(0, Math.min(timeOut.getTime(), lunchEnd.getTime()) - Math.max(timeIn.getTime(), lunchStart.getTime()));
+    const hoursRendered = rawHours - lunchMs / (1000 * 60 * 60);
 
     const outHour = timeOut.getHours();
     const outMinute = timeOut.getMinutes();
@@ -378,7 +383,11 @@ export async function updateTimeRecord(
       ? Math.ceil(minsEarly / penaltyBracketMinutes) * penaltyHoursPerBracket
       : 0;
     update.timeOut              = Timestamp.fromDate(newTimeOut);
-    update.hoursRendered        = Math.round((newTimeOut.getTime() - newTimeIn.getTime()) / 36000) / 100;
+    const rawMs       = newTimeOut.getTime() - newTimeIn.getTime();
+    const ls = new Date(newTimeIn); ls.setHours(12, 0, 0, 0);
+    const le = new Date(newTimeIn); le.setHours(13, 0, 0, 0);
+    const lMs = Math.max(0, Math.min(newTimeOut.getTime(), le.getTime()) - Math.max(newTimeIn.getTime(), ls.getTime()));
+    update.hoursRendered        = Math.round((rawMs - lMs) / 36000) / 100;
     update.isEarlyOut           = earlyOutPenaltyHours > 0;
     update.minutesEarlyOut      = minsEarly;
     update.earlyOutPenaltyHours = earlyOutPenaltyHours;
