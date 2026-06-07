@@ -146,11 +146,9 @@ export async function clockOut(internId: string, atTime?: Date): Promise<void> {
   // don't support collection queries in the read set. We pass the specific doc ID
   // into the transaction so both writes are committed atomically.
   const timeOut = atTime ?? new Date();
-  const date = timeOut.toISOString().split('T')[0];
   const openQ = query(
     collection(db, TIME_RECORDS),
     where('internId', '==', internId),
-    where('date', '==', date),
     where('timeOut', '==', null)
   );
   const openSnap = await getDocs(openQ);
