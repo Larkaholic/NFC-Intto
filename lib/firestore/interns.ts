@@ -155,7 +155,7 @@ export async function clockOut(internId: string, atTime?: Date): Promise<void> {
   if (openSnap.empty) throw new Error('No open time record found');
   const recordDocId = openSnap.docs[0].id;
 
-  const { endOfDayHour, lunchBreakHour, penaltyBracketMinutes, penaltyHoursPerBracket } = ATTENDANCE;
+  const { lunchBreakHour, endOfDayHour } = ATTENDANCE;
 
   await runTransaction(db, async (tx) => {
     const internRef = doc(db, INTERNS, internId);
@@ -176,48 +176,26 @@ export async function clockOut(internId: string, atTime?: Date): Promise<void> {
     const lunchMs    = Math.max(0, Math.min(timeOut.getTime(), lunchEnd.getTime()) - Math.max(timeIn.getTime(), lunchStart.getTime()));
     const hoursRendered = rawHours - lunchMs / (1000 * 60 * 60);
 
-    const outHour = timeOut.getHours();
-    const outMinute = timeOut.getMinutes();
-    const isLunchBreakOut = outHour === lunchBreakHour;
-
-    const minutesEarlyOut = isLunchBreakOut
-      ? 0
-      : Math.max(0, endOfDayHour * 60 - (outHour * 60 + outMinute));
-    const earlyOutBrackets = minutesEarlyOut > 0 ? Math.ceil(minutesEarlyOut / penaltyBracketMinutes) : 0;
-    const earlyOutPenaltyHours = earlyOutBrackets * penaltyHoursPerBracket;
-    const isEarlyOut = earlyOutPenaltyHours > 0;
-
     tx.update(recordRef, {
       timeOut: Timestamp.fromDate(timeOut),
       hoursRendered: Math.round(hoursRendered * 100) / 100,
-      isEarlyOut,
-      minutesEarlyOut,
-      earlyOutPenaltyHours,
+      isEarlyOut: false,
+      minutesEarlyOut: 0,
+      earlyOutPenaltyHours: 0,
     });
 
-    // Credit rules (work day = 8:00 AM–12:00 PM + 1:00 PM–5:00 PM, each half = 4h):
-    //   Lunch break clock-out (12:xx)  → morning half done = 4h
-    //   Afternoon clock-in (1PM+) + any out  → afternoon half done = 4h
-    //   Morning clock-in + end-of-day out    → full day = 8h
+    // Full day (8h) only if: clocked in before 1PM AND stayed until 5PM.
+    // Everything else (lunch-break out, afternoon session, leaving before 5PM) = half day (4h).
     const clockInHour = timeIn.getHours();
-    const isAfternoonSession = clockInHour >= ATTENDANCE.afternoonGraceHour;
-    const hoursToCredit = (isLunchBreakOut || isAfternoonSession) ? 4 : 8;
+    const isFullDay = clockInHour < ATTENDANCE.afternoonGraceHour && timeOut.getHours() >= endOfDayHour;
+    const hoursToCredit = isFullDay ? 8 : 4;
 
     const newCompleted = intern.completedHours + hoursToCredit;
-    const newRequiredHours = intern.requiredHours + earlyOutPenaltyHours;
-    const newRemaining = Math.max(0, newRequiredHours - newCompleted);
-    const startDateStr = intern.startDate.toDate().toISOString().split('T')[0];
-    const newEndDate = earlyOutPenaltyHours > 0
-      ? calcEndDate(startDateStr, newRequiredHours)
-      : null;
+    const newRemaining = Math.max(0, intern.requiredHours - newCompleted);
 
     tx.update(internRef, {
       isClockedIn: false,
       completedHours: Math.round(newCompleted * 100) / 100,
-      ...(earlyOutPenaltyHours > 0 && {
-        requiredHours: Math.round(newRequiredHours * 100) / 100,
-        endDate: Timestamp.fromDate(new Date(newEndDate! + 'T00:00:00')),
-      }),
       remainingHours: Math.round(newRemaining * 100) / 100,
       status: newRemaining <= 0 ? 'done' : intern.status,
       updatedAt: serverTimestamp(),
@@ -273,15 +251,13 @@ export async function recalcAllInternHours(): Promise<void> {
       .reduce((sum, r) => {
         const clockInHour = r.timeIn.toDate().getHours();
         const clockOutHour = r.timeOut!.toDate().getHours();
-        const isHalfDay = clockInHour >= ATTENDANCE.afternoonGraceHour || clockOutHour === ATTENDANCE.lunchBreakHour;
-        return sum + (isHalfDay ? 4 : 8);
+        const isFullDay = clockInHour < ATTENDANCE.afternoonGraceHour && clockOutHour >= ATTENDANCE.endOfDayHour;
+        return sum + (isFullDay ? 8 : 4);
       }, 0);
 
     const baseHours = ATTENDANCE.baseHours[intern.major] ?? 0;
-    const totalPenalties = records.reduce(
-      (s, r) => s + r.penaltyHours + (r.earlyOutPenaltyHours ?? 0), 0
-    );
-    const requiredHours = baseHours + totalPenalties;
+    const totalLatePenalties = records.reduce((s, r) => s + r.penaltyHours, 0);
+    const requiredHours = baseHours + totalLatePenalties;
     const remainingHours = Math.max(0, requiredHours - completedHours);
 
     await updateDoc(doc(db, INTERNS, intern.id), {
@@ -316,13 +292,13 @@ async function recalcInternHours(internId: string): Promise<void> {
     .reduce((sum, r) => {
       const clockInHour = r.timeIn.toDate().getHours();
       const clockOutHour = r.timeOut!.toDate().getHours();
-      const isHalfDay = clockInHour >= ATTENDANCE.afternoonGraceHour || clockOutHour === ATTENDANCE.lunchBreakHour;
-      return sum + (isHalfDay ? 4 : 8);
+      const isFullDay = clockInHour < ATTENDANCE.afternoonGraceHour && clockOutHour >= ATTENDANCE.endOfDayHour;
+      return sum + (isFullDay ? 8 : 4);
     }, 0);
 
   const baseHours = ATTENDANCE.baseHours[intern.major] ?? 0;
-  const totalPenalties = records.reduce((s, r) => s + r.penaltyHours + (r.earlyOutPenaltyHours ?? 0), 0);
-  const requiredHours = baseHours + totalPenalties;
+  const totalLatePenalties = records.reduce((s, r) => s + r.penaltyHours, 0);
+  const requiredHours = baseHours + totalLatePenalties;
   const remainingHours = Math.max(0, requiredHours - completedHours);
 
   await updateDoc(doc(db, INTERNS, internId), {
@@ -334,7 +310,7 @@ async function recalcInternHours(internId: string): Promise<void> {
   });
 }
 
-/** Edit a time record's timestamps; recalculates all penalty fields and intern totals */
+/** Edit a time record's timestamps and recalculate intern hour totals */
 export async function updateTimeRecord(
   recordId: string,
   internId: string,
@@ -344,7 +320,7 @@ export async function updateTimeRecord(
 ): Promise<void> {
   const {
     morningGraceHour, afternoonGraceHour, lunchBreakHour,
-    penaltyBracketMinutes, penaltyHoursPerBracket, endOfDayHour,
+    penaltyBracketMinutes, penaltyHoursPerBracket,
   } = ATTENDANCE;
 
   const h = newTimeIn.getHours();
@@ -373,22 +349,15 @@ export async function updateTimeRecord(
   };
 
   if (newTimeOut !== null) {
-    const oh = newTimeOut.getHours();
-    const om = newTimeOut.getMinutes();
-    const isLunchOut = oh === lunchBreakHour;
-    const minsEarly = isLunchOut ? 0 : Math.max(0, endOfDayHour * 60 - (oh * 60 + om));
-    const earlyOutPenaltyHours = minsEarly > 0
-      ? Math.ceil(minsEarly / penaltyBracketMinutes) * penaltyHoursPerBracket
-      : 0;
-    update.timeOut              = Timestamp.fromDate(newTimeOut);
-    const rawMs       = newTimeOut.getTime() - newTimeIn.getTime();
+    const rawMs = newTimeOut.getTime() - newTimeIn.getTime();
     const ls = new Date(newTimeIn); ls.setHours(12, 0, 0, 0);
     const le = new Date(newTimeIn); le.setHours(13, 0, 0, 0);
     const lMs = Math.max(0, Math.min(newTimeOut.getTime(), le.getTime()) - Math.max(newTimeIn.getTime(), ls.getTime()));
+    update.timeOut              = Timestamp.fromDate(newTimeOut);
     update.hoursRendered        = Math.round((rawMs - lMs) / 36000) / 100;
-    update.isEarlyOut           = earlyOutPenaltyHours > 0;
-    update.minutesEarlyOut      = minsEarly;
-    update.earlyOutPenaltyHours = earlyOutPenaltyHours;
+    update.isEarlyOut           = false;
+    update.minutesEarlyOut      = 0;
+    update.earlyOutPenaltyHours = 0;
   }
 
   await updateDoc(doc(db, TIME_RECORDS, recordId), update);

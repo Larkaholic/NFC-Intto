@@ -648,7 +648,7 @@ function EditTimeRecordModal({ record, intern, onClose, onSaved }: {
             <input type="text" value={notes} placeholder="Optional note" onChange={(e) => setNotes(e.target.value)} />
           </FormField>
           <div className="px-3 py-2 rounded-lg text-xs text-cream/40 border border-white/10 bg-white/5">
-            Penalties and intern hour totals recalculate automatically.
+            Intern hour totals recalculate automatically.
           </div>
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
           <div className="flex gap-3 pt-2">
@@ -899,6 +899,7 @@ function RecordsTab({ records, loading, date, onDateChange, onEditRecord }: {
   const lateCount  = records.filter((r) => r.isLate).length;
   const totalHours = records.reduce((s, r) => s + (r.hoursRendered ?? 0), 0);
 
+
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-3 gap-4">
@@ -937,15 +938,12 @@ function RecordsTab({ records, loading, date, onDateChange, onEditRecord }: {
                       }
                     </Td>
                     <Td className="text-cream/70">
-                      {r.minutesLate > 0 && <span className="text-red-400">{r.minutesLate}m late</span>}
-                      {r.minutesLate > 0 && (r.minutesEarlyOut ?? 0) > 0 && <br />}
-                      {(r.minutesEarlyOut ?? 0) > 0 && <span className="text-amber-400">{r.minutesEarlyOut}m early</span>}
-                      {r.minutesLate === 0 && (r.minutesEarlyOut ?? 0) === 0 && '—'}
+                      {r.minutesLate > 0 ? <span className="text-red-400">{r.minutesLate}m late</span> : '—'}
                     </Td>
                     <Td>
-                      {r.penaltyHours > 0 && <span className="text-red-400 text-xs font-medium block">+{r.penaltyHours}h (late)</span>}
-                      {(r.earlyOutPenaltyHours ?? 0) > 0 && <span className="text-amber-400 text-xs font-medium block">+{r.earlyOutPenaltyHours}h (early out)</span>}
-                      {r.penaltyHours === 0 && (r.earlyOutPenaltyHours ?? 0) === 0 && <span className="text-cream/40">—</span>}
+                      {r.penaltyHours > 0
+                        ? <span className="text-red-400 text-xs font-medium">+{r.penaltyHours}h</span>
+                        : <span className="text-cream/40">—</span>}
                     </Td>
                     <Td className="text-cream/40 text-xs">{r.notes || '—'}</Td>
                     <Td>

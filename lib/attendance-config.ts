@@ -17,11 +17,11 @@ export const ATTENDANCE = {
   afternoonGraceHour: 13,
   /** Clock-outs during this hour (12:xx) are treated as temporary lunch breaks */
   lunchBreakHour: 12,
-  /** Leaving before this hour incurs an early-out penalty (e.g. 17 = 5:00 PM) */
+  /** Staying until this hour earns full-day credit; leaving before = half-day */
   endOfDayHour: 17,
 
-  /** Each bracket of this many minutes (or fraction) adds one penalty unit */
+  /** Each bracket of this many minutes (or fraction) of lateness adds one penalty unit */
   penaltyBracketMinutes: 15,
-  /** Hours added to required total per penalty bracket */
+  /** Hours added to required total per late-arrival penalty bracket */
   penaltyHoursPerBracket: 2,
 } as const;
