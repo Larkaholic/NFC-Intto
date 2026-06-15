@@ -155,7 +155,7 @@ export async function clockOut(internId: string, atTime?: Date): Promise<void> {
   if (openSnap.empty) throw new Error('No open time record found');
   const recordDocId = openSnap.docs[0].id;
 
-  const { lunchBreakHour, endOfDayHour } = ATTENDANCE;
+  const { endOfDayHour } = ATTENDANCE;
 
   await runTransaction(db, async (tx) => {
     const internRef = doc(db, INTERNS, internId);

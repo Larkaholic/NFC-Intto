@@ -67,6 +67,7 @@ export interface Guest {
   contactNumber: string;
   email: string;
   organization: string;
+  department?: string;
   purpose: string;
   eventId: string | null;
   eventName: string;
