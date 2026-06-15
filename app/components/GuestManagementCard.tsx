@@ -51,27 +51,20 @@ function Field({ label, required, children }: {
 
 const EMPTY_FORM = { name: '', college: '', department: '', email: '', purpose: '' };
 
-function CheckInModal({ onClose }: { onClose: () => void }) {
-  const [form, setForm]         = useState(EMPTY_FORM);
-  const [activeEvent, setActiveEvent] = useState<Event | null | undefined>(undefined);
-  const [loading, setLoading]   = useState(false);
-  const [fetching, setFetching] = useState(true);
-  const [error, setError]       = useState('');
-  const [success, setSuccess]   = useState(false);
-
-  // Fetch active event once on mount
-  useEffect(() => {
-    getEventsByStatus('ongoing')
-      .then((events) => setActiveEvent(events[0] ?? null))
-      .catch(() => setActiveEvent(null))
-      .finally(() => setFetching(false));
-  }, []);
+function CheckInModal({ activeEvent, onClose }: {
+  activeEvent: Event | null;
+  onClose: () => void;
+}) {
+  const [form, setForm]     = useState(EMPTY_FORM);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]   = useState('');
+  const [success, setSuccess] = useState(false);
 
   function set(field: keyof typeof EMPTY_FORM, value: string) {
     setForm((f) => ({ ...f, [field]: value }));
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!form.name.trim()) return;
     setError('');
@@ -92,7 +85,7 @@ function CheckInModal({ onClose }: { onClose: () => void }) {
         handledBy:     'Kiosk',
       });
       setSuccess(true);
-      setTimeout(() => { setSuccess(false); onClose(); }, 1500);
+      setTimeout(() => { setSuccess(false); setForm(EMPTY_FORM); }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Check-in failed. Please try again.');
     } finally {
@@ -113,7 +106,7 @@ function CheckInModal({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-cream text-3xl font-bold tracking-tight">Guest Check-In</h2>
-            {!fetching && activeEvent && (
+            {activeEvent && (
               <p className="text-emerald-400 text-sm mt-1 flex items-center gap-1.5">
                 <span className="relative flex h-1.5 w-1.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -134,10 +127,6 @@ function CheckInModal({ onClose }: { onClose: () => void }) {
           <div className="flex flex-col items-center justify-center gap-3 py-12">
             <span className="text-emerald-400 text-5xl">✓</span>
             <p className="text-cream text-xl font-semibold">Checked in!</p>
-          </div>
-        ) : fetching ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-emerald-400 animate-spin" />
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -213,7 +202,16 @@ function CheckInModal({ onClose }: { onClose: () => void }) {
 // ─── Guest Management Card ────────────────────────────────────────────────────
 
 export default function GuestManagementCard() {
-  const [checkInOpen, setCheckInOpen] = useState(false);
+  const [checkInOpen, setCheckInOpen]   = useState(false);
+  const [activeEvent, setActiveEvent]   = useState<Event | null>(null);
+  const [eventLoading, setEventLoading] = useState(true);
+
+  useEffect(() => {
+    getEventsByStatus('ongoing')
+      .then((events) => setActiveEvent(events[0] ?? null))
+      .catch(() => setActiveEvent(null))
+      .finally(() => setEventLoading(false));
+  }, []);
 
   return (
     <>
@@ -235,18 +233,25 @@ export default function GuestManagementCard() {
           </div>
         </button>
 
-        <button className="guest-btn flex items-center gap-4 px-6 py-5 w-full text-left">
-          <div className="shrink-0 w-11 h-11 rounded-full border border-cream/20 flex items-center justify-center">
-            <CheckOutIcon />
-          </div>
-          <div>
-            <p className="text-cream font-semibold text-lg leading-tight">Check-Out Guest</p>
-            <p className="text-cream/50 text-sm font-light mt-0.5">Complete visit and record departure time</p>
-          </div>
-        </button>
+        {!eventLoading && activeEvent && (
+          <button className="guest-btn flex items-center gap-4 px-6 py-5 w-full text-left">
+            <div className="shrink-0 w-11 h-11 rounded-full border border-cream/20 flex items-center justify-center">
+              <CheckOutIcon />
+            </div>
+            <div>
+              <p className="text-cream font-semibold text-lg leading-tight">Check-Out Guest</p>
+              <p className="text-cream/50 text-sm font-light mt-0.5">Complete visit and record departure time</p>
+            </div>
+          </button>
+        )}
       </div>
 
-      {checkInOpen && <CheckInModal onClose={() => setCheckInOpen(false)} />}
+      {checkInOpen && (
+        <CheckInModal
+          activeEvent={activeEvent}
+          onClose={() => setCheckInOpen(false)}
+        />
+      )}
     </>
   );
 }
