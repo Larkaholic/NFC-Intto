@@ -28,8 +28,11 @@ import {
   getClosedDays,
   addClosedDay,
   removeClosedDay,
+  getAllEvents,
+  createEvent,
+  updateEvent,
 } from '@/lib/firestore';
-import type { Intern, Guest, TimeRecord, InternAnalyticsSummary, ClosedDay } from '@/lib/firestore';
+import type { Intern, Guest, TimeRecord, InternAnalyticsSummary, ClosedDay, Event, EventCreate } from '@/lib/firestore';
 
 type Tab = 'interns' | 'guests' | 'records' | 'analytics' | 'closedDays';
 
@@ -39,7 +42,10 @@ type AuthAction =
   | { type: 'clock-out';        intern: Intern }
   | { type: 'edit-record';      record: TimeRecord; intern: Intern }
   | { type: 'add-closed-day';   date: string; reason: string }
-  | { type: 'remove-closed-day'; id: string; date: string };
+  | { type: 'remove-closed-day'; id: string; date: string }
+  | { type: 'create-event';     data: EventCreate }
+  | { type: 'set-event-active'; id: string }
+  | { type: 'end-event';        id: string };
 
 const todayStr = new Date().toISOString().split('T')[0];
 
@@ -826,13 +832,220 @@ function InternTab({ interns, loading, onRefresh, onEdit, onClockIn, onClockOut 
   );
 }
 
+// ─── Create Event Modal ───────────────────────────────────────────────────────
+
+function CreateEventModal({ onClose, onSubmit }: {
+  onClose: () => void;
+  onSubmit: (data: EventCreate) => void;
+}) {
+  const [form, setForm] = useState({
+    name: '',
+    description: '',
+    location: '',
+    date: todayStr,
+    startTime: '08:00',
+    organizer: '',
+    expectedGuests: 0,
+  });
+  const [error, setError] = useState('');
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim() || !form.date) { setError('Name and date are required'); return; }
+    const startDateTime = new Date(`${form.date}T${form.startTime}:00`);
+    const data: EventCreate = {
+      name: form.name.trim(),
+      description: form.description.trim(),
+      location: form.location.trim(),
+      date: form.date,
+      startTime: Timestamp.fromDate(startDateTime),
+      endTime: null,
+      organizer: form.organizer.trim(),
+      expectedGuests: form.expectedGuests,
+      actualGuestCount: 0,
+      status: 'upcoming',
+    };
+    onSubmit(data);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-6"
+      style={{ background: 'rgba(13,41,31,0.85)', backdropFilter: 'blur(6px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="glass-card w-full max-w-lg p-8 flex flex-col gap-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-cream text-xl font-bold">Create Event</h2>
+            <p className="text-cream/40 text-xs mt-0.5">Staff card required to confirm</p>
+          </div>
+          <button onClick={onClose} className="text-cream/50 hover:text-cream text-2xl leading-none transition-colors">✕</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <FormField label="Event Name" required>
+            <input type="text" required placeholder="e.g. Industry Visit 2026"
+              value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+          </FormField>
+          <FormField label="Description">
+            <input type="text" placeholder="Brief event description"
+              value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+          </FormField>
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Location">
+              <input type="text" placeholder="Room / Building"
+                value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} />
+            </FormField>
+            <FormField label="Organizer">
+              <input type="text" placeholder="Organizer name"
+                value={form.organizer} onChange={(e) => setForm((f) => ({ ...f, organizer: e.target.value }))} />
+            </FormField>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <FormField label="Date" required>
+              <input type="date" required value={form.date}
+                onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
+            </FormField>
+            <FormField label="Start Time">
+              <input type="time" value={form.startTime}
+                onChange={(e) => setForm((f) => ({ ...f, startTime: e.target.value }))} />
+            </FormField>
+            <FormField label="Expected Guests">
+              <input type="number" min="0" value={form.expectedGuests || ''}
+                onChange={(e) => setForm((f) => ({ ...f, expectedGuests: Number(e.target.value) }))} />
+            </FormField>
+          </div>
+
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose}
+              className="guest-btn flex-1 py-3 text-cream/70 font-medium text-base text-center">
+              Cancel
+            </button>
+            <button type="submit"
+              className="flex-1 py-3 rounded-xl font-semibold text-base text-brand tracking-wide"
+              style={{ background: '#FFFEF9' }}>
+              Create Event
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Events Panel ─────────────────────────────────────────────────────────────
+
+function EventStatusBadge({ status }: { status: Event['status'] }) {
+  const map: Record<Event['status'], string> = {
+    upcoming:  'bg-blue-400/15 text-blue-400',
+    ongoing:   'bg-emerald-400/15 text-emerald-400',
+    completed: 'bg-white/10 text-cream/40',
+    cancelled: 'bg-red-400/15 text-red-400',
+  };
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${map[status]}`}>
+      {status}
+    </span>
+  );
+}
+
+function EventsPanel({ events, loading, onNewEvent, onSetActive, onEndEvent }: {
+  events: Event[];
+  loading: boolean;
+  onNewEvent: () => void;
+  onSetActive: (id: string) => void;
+  onEndEvent: (id: string) => void;
+}) {
+  const activeEvent = events.find((e) => e.status === 'ongoing');
+
+  return (
+    <div className="glass-card flex flex-col gap-0 overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+        <div className="flex items-center gap-3">
+          <h3 className="text-cream font-semibold">Events</h3>
+          {activeEvent && (
+            <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full font-medium">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              </span>
+              {activeEvent.name}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={onNewEvent}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-400/40 text-emerald-400 hover:bg-emerald-400/10 transition-all"
+        >
+          + New Event
+        </button>
+      </div>
+
+      {loading ? <Spinner /> : events.length === 0 ? (
+        <p className="text-cream/30 text-sm text-center py-8">No events yet</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="border-b border-white/10">
+            <tr>
+              {['Name', 'Date', 'Location', 'Organizer', 'Expected', 'Checked In', 'Status', ''].map((h, idx) => (
+                <Th key={idx}>{h}</Th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {events.map((ev) => (
+              <tr key={ev.id} className="hover:bg-white/5 transition-colors">
+                <td className="py-3 px-4 text-cream font-medium">{ev.name}</td>
+                <td className="py-3 px-4 text-cream/70">{ev.date}</td>
+                <td className="py-3 px-4 text-cream/60 max-w-28 truncate">{ev.location || '—'}</td>
+                <td className="py-3 px-4 text-cream/60">{ev.organizer || '—'}</td>
+                <td className="py-3 px-4 text-cream/60">{ev.expectedGuests || '—'}</td>
+                <td className="py-3 px-4 text-cream/70">{ev.actualGuestCount}</td>
+                <td className="py-3 px-4"><EventStatusBadge status={ev.status} /></td>
+                <td className="py-3 px-4">
+                  <div className="flex gap-1.5">
+                    {ev.status !== 'ongoing' && ev.status !== 'completed' && ev.status !== 'cancelled' && (
+                      <button
+                        onClick={() => onSetActive(ev.id)}
+                        className="text-xs px-2 py-1 rounded border border-emerald-400/30 text-emerald-400/70 hover:text-emerald-400 hover:border-emerald-400/60 transition-colors whitespace-nowrap"
+                      >
+                        Set Active
+                      </button>
+                    )}
+                    {ev.status === 'ongoing' && (
+                      <button
+                        onClick={() => onEndEvent(ev.id)}
+                        className="text-xs px-2 py-1 rounded border border-amber-400/30 text-amber-400/70 hover:text-amber-400 hover:border-amber-400/60 transition-colors"
+                      >
+                        End
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 // ─── Tab: Guests ──────────────────────────────────────────────────────────────
 
-function GuestTab({ guests, loading, date, onDateChange }: {
+function GuestTab({ guests, loading, date, onDateChange, events, eventsLoading, onNewEvent, onSetActive, onEndEvent }: {
   guests: Guest[];
   loading: boolean;
   date: string;
   onDateChange: (d: string) => void;
+  events: Event[];
+  eventsLoading: boolean;
+  onNewEvent: () => void;
+  onSetActive: (id: string) => void;
+  onEndEvent: (id: string) => void;
 }) {
   const checkedOut   = guests.filter((g) => g.checkOutTime !== null);
   const stillInside  = guests.length - checkedOut.length;
@@ -847,6 +1060,14 @@ function GuestTab({ guests, loading, date, onDateChange }: {
         <Stat label="Still Inside"  value={stillInside} />
         <Stat label="Avg Duration"  value={`${avgDuration}h`} />
       </div>
+
+      <EventsPanel
+        events={events}
+        loading={eventsLoading}
+        onNewEvent={onNewEvent}
+        onSetActive={onSetActive}
+        onEndEvent={onEndEvent}
+      />
 
       <DateFilter value={date} onChange={onDateChange} />
 
@@ -1411,6 +1632,9 @@ export default function AdminPage() {
   const [guestDate, setGuestDate]   = useState(todayStr);
   const [guests, setGuests]         = useState<Guest[]>([]);
   const [guestsLoading, setGuestsLoading] = useState(false);
+  const [events, setEvents]         = useState<Event[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [creatingEventForm, setCreatingEventForm] = useState(false);
 
   const [recordDate, setRecordDate]     = useState(todayStr);
   const [records, setRecords]           = useState<TimeRecord[]>([]);
@@ -1439,6 +1663,12 @@ export default function AdminPage() {
     setGuestsLoading(true);
     try { setGuests(await getGuestsByDate(date)); }
     finally { setGuestsLoading(false); }
+  }, []);
+
+  const fetchEvents = useCallback(async () => {
+    setEventsLoading(true);
+    try { setEvents(await getAllEvents()); }
+    finally { setEventsLoading(false); }
   }, []);
 
   const fetchRecords = useCallback(async (date: string) => {
@@ -1477,7 +1707,7 @@ export default function AdminPage() {
     // This is React's own documented data-fetching pattern, so we suppress the rule.
     /* eslint-disable react-hooks/set-state-in-effect */
     if (tab === 'interns'    && !internsLoaded)    fetchInterns();
-    if (tab === 'guests')                          fetchGuests(guestDate);
+    if (tab === 'guests')                          { fetchGuests(guestDate); fetchEvents(); }
     if (tab === 'records')                         fetchRecords(recordDate);
     if (tab === 'analytics'  && !analyticsLoaded)  fetchAnalytics();
     if (tab === 'closedDays' && !closedDaysLoaded) fetchClosedDays();
@@ -1579,6 +1809,21 @@ export default function AdminPage() {
                   await recalcAllInternEndDates(days.map((d) => d.date));
                   await fetchInterns();
                 })().catch(console.error);
+              } else if (action.type === 'create-event') {
+                (async () => {
+                  await createEvent(action.data);
+                  await fetchEvents();
+                })().catch(console.error);
+              } else if (action.type === 'set-event-active') {
+                (async () => {
+                  await updateEvent(action.id, { status: 'ongoing' });
+                  await fetchEvents();
+                })().catch(console.error);
+              } else if (action.type === 'end-event') {
+                (async () => {
+                  await updateEvent(action.id, { status: 'completed' });
+                  await fetchEvents();
+                })().catch(console.error);
               }
             }}
             onCancel={() => setPendingAction(null)}
@@ -1607,12 +1852,26 @@ export default function AdminPage() {
             onSaved={() => { fetchInterns(); fetchRecords(recordDate); }}
           />
         )}
+        {creatingEventForm && (
+          <CreateEventModal
+            onClose={() => setCreatingEventForm(false)}
+            onSubmit={(data) => {
+              setCreatingEventForm(false);
+              setPendingAction({ type: 'create-event', data });
+            }}
+          />
+        )}
         {tab === 'guests' && (
           <GuestTab
             guests={guests}
             loading={guestsLoading}
             date={guestDate}
             onDateChange={(d) => { setGuestDate(d); fetchGuests(d); }}
+            events={events}
+            eventsLoading={eventsLoading}
+            onNewEvent={() => setCreatingEventForm(true)}
+            onSetActive={(id) => setPendingAction({ type: 'set-event-active', id })}
+            onEndEvent={(id) => setPendingAction({ type: 'end-event', id })}
           />
         )}
         {tab === 'records' && (
